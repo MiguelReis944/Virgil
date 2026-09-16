@@ -81,6 +81,19 @@ func TestMissingUsageIsUnknown(t *testing.T) {
 	}
 }
 
+func TestSSEExtractsCachedInputTokens(t *testing.T) {
+	adapter := NewOpenAICompatible("https://example.invalid/v1", http.DefaultClient)
+	body := "data: {\"model\":\"fixture-model\",\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":3,\"prompt_tokens_details\":{\"cached_tokens\":4}}}\n\ndata: [DONE]\n\n"
+	resp := &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}
+	result, err := adapter.Stream(context.Background(), resp, httptest.NewRecorder())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.CachedTokens == nil || *result.CachedTokens != 4 || result.InputTokens == nil || *result.InputTokens != 12 {
+		t.Fatalf("cached SSE usage lost: %+v", result)
+	}
+}
+
 func TestProviderErrorEventIsSanitized(t *testing.T) {
 	adapter := NewOpenAICompatible("https://example.invalid/v1", http.DefaultClient)
 	resp := &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("event: error\ndata: {\"message\":\"private canary\"}\n\n"))}

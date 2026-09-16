@@ -1,16 +1,19 @@
 package gateway
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/MiguelReis944/Virgil/internal/config"
 	"github.com/MiguelReis944/Virgil/internal/providers"
+	"github.com/MiguelReis944/Virgil/internal/telemetry"
 )
 
 const maxChatRequest = 1 << 20
@@ -22,8 +25,10 @@ type route struct {
 }
 
 type router struct {
-	models map[string]route
-	getenv func(string) string
+	models         map[string]route
+	getenv         func(string) string
+	recorder       EventRecorder
+	installationID string
 }
 
 func newRouter(cfg config.Config, client *http.Client, getenv func(string) string) (*router, error) {
@@ -99,16 +104,76 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_provider_config")
 		return
 	}
+	trace, err := telemetry.NewTrace(req.Header.Get("traceparent"))
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "trace_unavailable")
+		return
+	}
+	runID, err := telemetry.ResolveRunID(req.Header.Get("X-Virgil-Run-ID"))
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "run_id_unavailable")
+		return
+	}
+	upstreamReq.Header.Set("traceparent", "00-"+trace.TraceID+"-"+trace.SpanID+"-01")
+	started := time.Now()
+	result := providers.Result{Status: "transport_error", UsageSource: "unknown", ErrorCode: "provider_transport_error"}
+	defer func() {
+		if router.recorder == nil {
+			return
+		}
+		event, err := telemetry.Build(telemetry.Attempt{
+			InstallationID: router.installationID,
+			RunID:          runID,
+			TraceID:        trace.TraceID,
+			SpanID:         trace.SpanID,
+			Provider:       selected.provider,
+			RequestedModel: selector.Model,
+			ResponseModel:  result.ResponseModel,
+			InputTokens:    result.InputTokens,
+			OutputTokens:   result.OutputTokens,
+			CachedTokens:   result.CachedTokens,
+			UsageSource:    result.UsageSource,
+			Status:         result.Status,
+			ErrorCode:      result.ErrorCode,
+			StartedAt:      started,
+			EndedAt:        time.Now(),
+		})
+		if err != nil {
+			slog.Error("event rejected", "code", "event_build_failed")
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 2*time.Second)
+		defer cancel()
+		if err := router.recorder.Record(ctx, event); err != nil {
+			slog.Error("event record failed", "code", "journal_write_failed")
+		}
+	}()
 	resp, err := selected.adapter.Do(upstreamReq)
 	if err != nil {
+		if req.Context().Err() != nil {
+			result.Status = "client_cancelled"
+			result.ErrorCode = "client_cancelled"
+		}
 		writeAPIError(w, http.StatusBadGateway, "provider_transport_error")
 		return
 	}
 	if selector.Stream && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		_, _ = selected.adapter.Stream(req.Context(), resp, w)
+		streamResult, streamErr := selected.adapter.Stream(req.Context(), resp, w)
+		result = streamResult
+		if streamErr != nil {
+			result.ErrorCode = "provider_stream_error"
+			if result.Status == "client_cancelled" {
+				result.ErrorCode = "client_cancelled"
+			}
+		}
 		return
 	}
-	if _, err := selected.adapter.Translate(resp, w); err != nil {
+	translated, err := selected.adapter.Translate(resp, w)
+	result = translated
+	if err != nil {
+		result.Status = "provider_error"
+		result.ErrorCode = "provider_response_error"
+		result.UsageSource = "unknown"
 		writeAPIError(w, http.StatusBadGateway, "provider_response_error")
 	}
 }

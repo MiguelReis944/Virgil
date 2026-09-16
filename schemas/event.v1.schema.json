@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MiguelReis944/Virgil/schemas/event.v1.schema.json",
+  "title": "Virgil canonical event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id", "event_type", "schema_version", "created_at", "installation_id",
+    "run_id", "trace_id", "span_id", "provider", "requested_model",
+    "input_tokens", "output_tokens", "cached_tokens", "usage_source",
+    "latency_ms", "status", "actual_cost", "estimated_cost", "content_capture"
+  ],
+  "properties": {
+    "event_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "event_type": {"enum": ["llm.response.completed", "llm.response.failed", "llm.policy.blocked"]},
+    "schema_version": {"const": "1.0"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "organization_id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$"},
+    "installation_id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$"},
+    "project_id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$"},
+    "environment": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$"},
+    "agent_id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$"},
+    "run_id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$"},
+    "trace_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "span_id": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "provider": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$"},
+    "requested_model": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$"},
+    "response_model": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$"},
+    "input_tokens": {"type": ["integer", "null"], "minimum": 0},
+    "output_tokens": {"type": ["integer", "null"], "minimum": 0},
+    "cached_tokens": {"type": ["integer", "null"], "minimum": 0},
+    "usage_source": {"enum": ["provider", "estimated", "unknown"]},
+    "latency_ms": {"type": "integer", "minimum": 0},
+    "status": {"enum": ["success", "provider_error", "transport_error", "policy_block", "client_cancelled"]},
+    "error_code": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"},
+    "tool_name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$"},
+    "policy_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision", "reason", "policy", "attempt", "threshold"],
+      "properties": {
+        "decision": {"enum": ["allow", "block"]},
+        "reason": {"type": "string", "maxLength": 64},
+        "policy": {"type": "string", "maxLength": 64},
+        "attempt": {"type": "integer", "minimum": 0},
+        "threshold": {"type": "integer", "minimum": 0}
+      }
+    },
+    "actual_cost": {"type": ["string", "null"], "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"},
+    "estimated_cost": {"type": ["string", "null"], "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"},
+    "pricing_version": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$"},
+    "cost_currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+    "content_capture": {"const": false}
+  }
+}

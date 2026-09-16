@@ -8,7 +8,7 @@ It runs next to your application, intercepts calls to providers such as OpenAI, 
 
 The Edge Gateway is designed to work without an account, without a mandatory cloud service, and without sending prompts or responses anywhere by default.
 
-> Status: early implementation. The local server, health endpoint, and JSON/SSE Chat Completions proxy exist. Policies, event journal, exporters, and Control Plane described below remain target behavior and may change before the first stable release.
+> Status: early implementation. The local server, health endpoint, JSON/SSE Chat Completions proxy, and canonical event schema exist. Durable event storage, policies, exporters, and Control Plane described below remain target behavior and may change before the first stable release.
 
 ## Run the current local server
 
@@ -290,6 +290,8 @@ For stronger control, Virgil will eventually support a Runner or SDK mode in whi
 ---
 
 ## Observability data
+
+The versioned public event contract is [`schemas/event.v1.schema.json`](schemas/event.v1.schema.json). The gateway now constructs metadata-only events internally; SQLite persistence follows in the next milestone.
 
 Virgil should record a provider-neutral event. Optional team identifiers are absent in local mode. This synthetic example shows the public field set without request or response content:
 
@@ -769,7 +771,7 @@ Contributions are welcome.
 
 Before opening a pull request:
 
-1. read this README and the public event contract when available;
+1. read this README and the public event contract;
 2. avoid adding provider secrets or real payloads;
 3. use synthetic test fixtures;
 4. add tests for privacy-sensitive behavior;

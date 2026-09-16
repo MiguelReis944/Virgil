@@ -9,12 +9,19 @@ import (
 	"time"
 
 	"github.com/MiguelReis944/Virgil/internal/config"
+	"github.com/MiguelReis944/Virgil/internal/telemetry"
 )
 
+type EventRecorder interface {
+	Record(ctx context.Context, event telemetry.Event) error
+}
+
 type Dependencies struct {
-	DB     *sql.DB
-	Client *http.Client
-	Getenv func(string) string
+	DB             *sql.DB
+	Client         *http.Client
+	Getenv         func(string) string
+	Recorder       EventRecorder
+	InstallationID string
 }
 
 func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
@@ -24,6 +31,15 @@ func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
 	router, err := newRouter(cfg, deps.Client, deps.Getenv)
 	if err != nil {
 		return nil, err
+	}
+	router.recorder = deps.Recorder
+	router.installationID = deps.InstallationID
+	if router.installationID == "" {
+		id, err := telemetry.NewID(16)
+		if err != nil {
+			return nil, err
+		}
+		router.installationID = "install_" + id
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", router.chat)

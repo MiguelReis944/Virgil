@@ -121,10 +121,7 @@ func inspectSSEFrame(frame []byte, result *Result) (bool, error) {
 	var chunk struct {
 		Model string          `json:"model"`
 		Error json.RawMessage `json:"error"`
-		Usage *struct {
-			PromptTokens     int64 `json:"prompt_tokens"`
-			CompletionTokens int64 `json:"completion_tokens"`
-		} `json:"usage"`
+		Usage *openaiUsage    `json:"usage"`
 	}
 	if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
 		return false, errors.New("invalid provider SSE data")
@@ -135,13 +132,8 @@ func inspectSSEFrame(frame []byte, result *Result) (bool, error) {
 	if chunk.Model != "" {
 		result.ResponseModel = chunk.Model
 	}
-	if chunk.Usage != nil {
-		if chunk.Usage.PromptTokens < 0 || chunk.Usage.CompletionTokens < 0 {
-			return false, errors.New("invalid provider SSE usage")
-		}
-		result.InputTokens = &chunk.Usage.PromptTokens
-		result.OutputTokens = &chunk.Usage.CompletionTokens
-		result.UsageSource = "provider"
+	if err := applyUsage(result, chunk.Usage); err != nil {
+		return false, err
 	}
 	return false, nil
 }

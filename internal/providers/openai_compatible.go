@@ -52,6 +52,34 @@ type chatMessage struct {
 	Name       string          `json:"name"`
 }
 
+type openaiUsage struct {
+	PromptTokens        int64 `json:"prompt_tokens"`
+	CompletionTokens    int64 `json:"completion_tokens"`
+	PromptTokensDetails *struct {
+		CachedTokens int64 `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+}
+
+func applyUsage(result *Result, usage *openaiUsage) error {
+	if usage == nil {
+		return nil
+	}
+	if usage.PromptTokens < 0 || usage.CompletionTokens < 0 {
+		return errors.New("invalid provider usage")
+	}
+	result.InputTokens = &usage.PromptTokens
+	result.OutputTokens = &usage.CompletionTokens
+	if usage.PromptTokensDetails != nil {
+		cached := usage.PromptTokensDetails.CachedTokens
+		if cached < 0 || cached > usage.PromptTokens {
+			return errors.New("invalid cached usage")
+		}
+		result.CachedTokens = &cached
+	}
+	result.UsageSource = "provider"
+	return nil
+}
+
 func decodeStrict(raw []byte, into any) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -154,23 +182,15 @@ func (a *OpenAICompatible) Translate(resp *http.Response, downstream http.Respon
 		return Result{}, errors.New("provider response exceeds limit")
 	}
 	var parsed struct {
-		Model string `json:"model"`
-		Usage *struct {
-			PromptTokens     int64 `json:"prompt_tokens"`
-			CompletionTokens int64 `json:"completion_tokens"`
-		} `json:"usage"`
+		Model string       `json:"model"`
+		Usage *openaiUsage `json:"usage"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return Result{}, errors.New("invalid provider JSON")
 	}
 	result := Result{ResponseModel: parsed.Model, Status: "success", UsageSource: "unknown"}
-	if parsed.Usage != nil {
-		if parsed.Usage.PromptTokens < 0 || parsed.Usage.CompletionTokens < 0 {
-			return Result{}, errors.New("invalid provider usage")
-		}
-		result.InputTokens = &parsed.Usage.PromptTokens
-		result.OutputTokens = &parsed.Usage.CompletionTokens
-		result.UsageSource = "provider"
+	if err := applyUsage(&result, parsed.Usage); err != nil {
+		return Result{}, err
 	}
 	downstream.Header().Set("Content-Type", "application/json")
 	downstream.WriteHeader(resp.StatusCode)

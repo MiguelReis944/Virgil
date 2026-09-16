@@ -90,6 +90,19 @@ func TestOpenAICompatibleNormalizesProviderError(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleExtractsCachedInputTokens(t *testing.T) {
+	adapter := NewOpenAICompatible("https://example.invalid/v1", http.DefaultClient)
+	raw := []byte(`{"id":"chatcmpl_fixture","object":"chat.completion","model":"fixture-model","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":3,"prompt_tokens_details":{"cached_tokens":4}}}`)
+	resp := &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(raw))}
+	result, err := adapter.Translate(resp, httptest.NewRecorder())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.CachedTokens == nil || *result.CachedTokens != 4 || result.InputTokens == nil || *result.InputTokens != 12 {
+		t.Fatalf("cached input usage lost: %+v", result)
+	}
+}
+
 func TestOpenAICompatibleDoesNotForwardKeyAcrossRedirect(t *testing.T) {
 	var redirected bool
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
