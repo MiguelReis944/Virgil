@@ -241,7 +241,7 @@ A policy can identify a repeated failure using:
 
 ```text
 tool name
-normalized tool arguments
+non-reversible fingerprint of the normalized tool call
 error type
 error code
 provider
@@ -254,6 +254,8 @@ After three equivalent failures, the gateway can:
 3. write an audit event;
 4. emit a local alert;
 5. send a remote alert when the Control Plane is available.
+
+Tool execution errors outside the proxy require structured feedback from the application; the gateway cannot infer them from provider traffic alone. Raw tool arguments are not stored for repetition checks.
 
 An example decision is:
 
@@ -288,8 +290,8 @@ Virgil should record a provider-neutral event. Optional team identifiers are abs
   "environment": "development",
   "agent_id": "agent_example",
   "run_id": "run_example",
-  "trace_id": "trace_example",
-  "span_id": "span_example",
+  "trace_id": "00000000000000000000000000000001",
+  "span_id": "0000000000000001",
   "provider": "kimi",
   "requested_model": "kimi-model",
   "response_model": "kimi-model",
@@ -302,7 +304,7 @@ Virgil should record a provider-neutral event. Optional team identifiers are abs
   "error_code": null,
   "tool_name": null,
   "policy_decision": "allow",
-  "actual_cost": 0.0042,
+  "actual_cost": "0.0042",
   "estimated_cost": null,
   "cost_currency": "USD",
   "pricing_version": "example-v1",
@@ -311,7 +313,7 @@ Virgil should record a provider-neutral event. Optional team identifiers are abs
 }
 ```
 
-`usage_source` distinguishes usage reported by the provider from locally estimated usage. `actual_cost` is calculated from provider-reported usage and a versioned price table; `estimated_cost` is used when usage must be estimated. Neither is a provider invoice. The event schema should use OpenTelemetry semantic conventions where they apply, preserve `trace_id` and `span_id`, and map to OTLP for export.
+`usage_source` distinguishes usage reported by the provider from locally estimated usage. `actual_cost` is calculated from provider-reported usage and a versioned price table; `estimated_cost` is used when usage must be estimated. Cost amounts are decimal strings to avoid binary rounding. Neither is a provider invoice. The event schema should use OpenTelemetry semantic conventions where they apply, preserve `trace_id` and `span_id`, and map to OTLP for export.
 
 The following data is disabled by default:
 
