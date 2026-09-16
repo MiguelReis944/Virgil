@@ -32,15 +32,16 @@ func NewOpenAICompatible(baseURL string, client *http.Client) *OpenAICompatible 
 }
 
 type chatRequest struct {
-	Model       string            `json:"model"`
-	Messages    []json.RawMessage `json:"messages"`
-	Stream      bool              `json:"stream"`
-	Tools       json.RawMessage   `json:"tools"`
-	ToolChoice  json.RawMessage   `json:"tool_choice"`
-	Temperature *float64          `json:"temperature"`
-	TopP        *float64          `json:"top_p"`
-	MaxTokens   *int64            `json:"max_tokens"`
-	Stop        json.RawMessage   `json:"stop"`
+	Model         string            `json:"model"`
+	Messages      []json.RawMessage `json:"messages"`
+	Stream        bool              `json:"stream"`
+	StreamOptions json.RawMessage   `json:"stream_options"`
+	Tools         json.RawMessage   `json:"tools"`
+	ToolChoice    json.RawMessage   `json:"tool_choice"`
+	Temperature   *float64          `json:"temperature"`
+	TopP          *float64          `json:"top_p"`
+	MaxTokens     *int64            `json:"max_tokens"`
+	Stop          json.RawMessage   `json:"stop"`
 }
 
 type chatMessage struct {
@@ -72,8 +73,16 @@ func (a *OpenAICompatible) Validate(body json.RawMessage) error {
 	if req.Model == "" || len(req.Messages) == 0 {
 		return errors.New("model and messages are required")
 	}
-	if req.Stream {
-		return errors.New("streaming is not available yet")
+	if len(req.StreamOptions) != 0 {
+		if !req.Stream {
+			return errors.New("stream_options requires streaming")
+		}
+		var options struct {
+			IncludeUsage bool `json:"include_usage"`
+		}
+		if err := decodeStrict(req.StreamOptions, &options); err != nil {
+			return errors.New("unsupported stream_options")
+		}
 	}
 	for _, raw := range req.Messages {
 		var msg chatMessage

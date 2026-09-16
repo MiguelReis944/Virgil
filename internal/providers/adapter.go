@@ -21,4 +21,5 @@ type Adapter interface {
 	Build(ctx context.Context, body json.RawMessage, key string) (*http.Request, error)
 	Do(req *http.Request) (*http.Response, error)
 	Translate(resp *http.Response, downstream http.ResponseWriter) (Result, error)
+	Stream(ctx context.Context, resp *http.Response, downstream http.ResponseWriter) (Result, error)
 }

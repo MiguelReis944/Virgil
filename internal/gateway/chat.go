@@ -73,7 +73,8 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	var selector struct {
-		Model string `json:"model"`
+		Model  string `json:"model"`
+		Stream bool   `json:"stream"`
 	}
 	if err := json.Unmarshal(body, &selector); err != nil || selector.Model == "" {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request")
@@ -101,6 +102,10 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 	resp, err := selected.adapter.Do(upstreamReq)
 	if err != nil {
 		writeAPIError(w, http.StatusBadGateway, "provider_transport_error")
+		return
+	}
+	if selector.Stream && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		_, _ = selected.adapter.Stream(req.Context(), resp, w)
 		return
 	}
 	if _, err := selected.adapter.Translate(resp, w); err != nil {
