@@ -1,8 +1,8 @@
 # Virgil
 
-## Open LLM Gateway and Guardrails for AI Agents
+## Open source runtime control for LLM agents
 
-Virgil is an open source, local-first gateway for observing, controlling, and protecting LLM-powered applications.
+Virgil is an open source runtime control layer for LLM agents, with local guardrails, cost enforcement, and an optional team control plane.
 
 It runs next to your application, intercepts calls to providers such as OpenAI, Anthropic, and Kimi, enforces safety and budget policies, stores telemetry locally when needed, and optionally sends selected metadata to a centralized Control Plane.
 
@@ -40,12 +40,14 @@ The Edge Gateway is open source and runs on the user's machine, server, containe
 It is responsible for:
 
 - receiving LLM requests through a local HTTP endpoint;
+- exposing an OpenAI-compatible endpoint;
 - forwarding requests to the selected provider;
-- normalizing provider responses;
-- recording execution metadata;
-- enforcing local guardrails;
-- buffering telemetry in SQLite;
-- exporting telemetry to OpenTelemetry or a Virgil Control Plane;
+- adapting OpenAI, Anthropic, Kimi, and configurable OpenAI-compatible endpoints;
+- measuring latency and token usage and normalizing provider errors;
+- enforcing local cost, duration, token, call, model, provider, and tool policies;
+- detecting repeated calls and errors;
+- redacting events and storing them in SQLite with a local delivery queue;
+- exporting JSONL, OTLP/HTTP, or selected events to a Virgil Control Plane with retry and backoff;
 - continuing to work when the network or Control Plane is unavailable.
 
 ### Control Plane
@@ -54,18 +56,18 @@ The Control Plane is the optional centralized service for teams and organization
 
 It is responsible for:
 
-- organizations, users, teams, and projects;
+- organizations, users, teams, projects, and environments;
 - centralized dashboards;
 - cost aggregation;
 - global budgets;
 - audit trails;
-- SSO and RBAC;
+- RBAC and OIDC SSO, with SAML in an enterprise phase;
 - alert routing;
 - policy distribution;
 - connected installation management;
 - retention and export controls.
 
-The Edge Gateway remains functional without the Control Plane.
+The Edge Gateway remains functional without the Control Plane. The Control Plane may live in a separate repository; this public repository is planned to contain the Edge Gateway, public schemas, and integration protocol.
 
 ---
 
@@ -150,7 +152,7 @@ The gateway can export telemetry to systems that already exist in the user's inf
 - Jaeger;
 - Datadog;
 - an internal HTTP endpoint;
-- a custom event consumer.
+- a custom event consumer or self-hosted Control Plane.
 
 Virgil should not force a company to use the hosted Control Plane.
 
@@ -168,7 +170,7 @@ Policies and telemetry should work across providers instead of being tied to one
 
 ### Privacy by default
 
-Prompts, responses, hidden reasoning, and tool arguments are not persisted or exported by default.
+Prompts, responses, and tool arguments are not persisted or exported by default. Hidden reasoning and Chain of Thought are not collected.
 
 ### Deterministic guardrails
 
@@ -220,6 +222,7 @@ Initial policy types:
 - maximum cost per execution;
 - maximum input tokens;
 - maximum output tokens;
+- maximum total tokens;
 - maximum number of provider calls;
 - maximum execution duration;
 - maximum tool calls;
@@ -252,6 +255,18 @@ After three equivalent failures, the gateway can:
 4. emit a local alert;
 5. send a remote alert when the Control Plane is available.
 
+An example decision is:
+
+```json
+{
+  "decision": "block",
+  "reason": "repeated_tool_error",
+  "policy": "repeated_error_limit",
+  "attempt": 4,
+  "threshold": 3
+}
+```
+
 ### Important limitation
 
 A proxy can block requests that pass through it. It cannot terminate an arbitrary agent process that is looping entirely outside the gateway.
@@ -262,53 +277,47 @@ For stronger control, Virgil will eventually support a Runner or SDK mode in whi
 
 ## Observability data
 
-Virgil should record a provider-neutral execution model.
-
-Example identifiers:
-
-```text
-organization_id
-installation_id
-project_id
-environment
-agent_id
-run_id
-trace_id
-span_id
-```
-
-Example event fields:
+Virgil should record a provider-neutral event. Optional team identifiers are absent in local mode. This synthetic example shows the public field set without request or response content:
 
 ```json
 {
   "event_type": "llm.response.completed",
-  "trace_id": "trace_01H...",
-  "run_id": "run_01H...",
-  "installation_id": "install_01H...",
+  "organization_id": "org_example",
+  "installation_id": "install_example",
+  "project_id": "project_example",
+  "environment": "development",
+  "agent_id": "agent_example",
+  "run_id": "run_example",
+  "trace_id": "trace_example",
+  "span_id": "span_example",
   "provider": "kimi",
   "requested_model": "kimi-model",
   "response_model": "kimi-model",
   "input_tokens": 1240,
   "output_tokens": 318,
+  "cached_tokens": 0,
+  "usage_source": "provider",
   "latency_ms": 1840,
-  "finish_reason": "stop",
-  "cost": {
-    "amount": 0.0042,
-    "currency": "USD",
-    "calculation": "provider_usage",
-    "pricing_version": "2026-01-01"
-  },
-  "content_capture": false
+  "status": "success",
+  "error_code": null,
+  "tool_name": null,
+  "policy_decision": "allow",
+  "actual_cost": 0.0042,
+  "estimated_cost": null,
+  "cost_currency": "USD",
+  "pricing_version": "example-v1",
+  "content_capture": false,
+  "created_at": "2026-01-01T00:00:00Z"
 }
 ```
 
-The event schema should use OpenTelemetry-compatible names wherever possible.
+`usage_source` distinguishes usage reported by the provider from locally estimated usage. `actual_cost` is calculated from provider-reported usage and a versioned price table; `estimated_cost` is used when usage must be estimated. Neither is a provider invoice. The event schema should use OpenTelemetry semantic conventions where they apply, preserve `trace_id` and `span_id`, and map to OTLP for export.
 
 The following data is disabled by default:
 
 - raw prompts;
 - raw model responses;
-- hidden reasoning or reasoning traces;
+- hidden reasoning or Chain of Thought;
 - raw tool arguments;
 - user secrets;
 - provider API keys.
@@ -374,7 +383,7 @@ The gateway must tolerate:
 - partial batch failures;
 - policy version changes.
 
-The Control Plane must deduplicate events by idempotency key.
+Outbox states are `pending`, `sending`, `delivered`, `retryable`, and `dead_letter`. Export is disabled until the user configures a destination and allowed fields. A failed delivery remains local for a later retry with backoff; repeated permanent failures move to `dead_letter` for inspection. The Control Plane must deduplicate events by idempotency key.
 
 ---
 
@@ -422,7 +431,6 @@ retention_days = 30
 capture_prompts = false
 capture_responses = false
 capture_tool_arguments = false
-capture_reasoning = false
 redact_secrets = true
 
 [guardrails]
@@ -466,6 +474,8 @@ They must never be committed to Git.
 Applications should be able to use Virgil by changing their base URL:
 
 ```python
+import os
+
 from openai import OpenAI
 
 client = OpenAI(
@@ -586,6 +596,7 @@ Virgil is designed around a local-first privacy model.
 - no prompt storage;
 - no response storage;
 - no hidden reasoning storage;
+- no Chain of Thought collection;
 - no provider key upload;
 - no cross-customer data sharing;
 - no silent content capture.
@@ -601,6 +612,8 @@ When the Control Plane is enabled:
 - event payloads are redacted before export;
 - the local gateway records export status;
 - the user can return to local mode.
+
+All exports, including custom exporters and OTLP, pass through redaction before data leaves the gateway. The user selects which fields are allowed to leave the machine. Provider keys stay on the user's computer and are never sent to the Control Plane. A gateway can use SQLite alone, export to an OpenTelemetry Collector, or point to a self-hosted Control Plane. An installation can be revoked without disabling local operation.
 
 ### Public repository policy
 
@@ -676,74 +689,29 @@ The hosted Control Plane may live in a separate private repository while keeping
 
 ## Development roadmap
 
-### Phase 1 — Local gateway
+1. Audit and prepare the repository.
+2. Write the architecture specification.
+3. Build the minimum local gateway: server, `/health`, configuration, and logs.
+4. Add an OpenAI-compatible proxy with streaming support.
+5. Define the canonical event and trace identifiers.
+6. Persist events in SQLite with migrations and retention.
+7. Redact secrets and keep content capture disabled by default.
+8. Enforce deterministic local policies.
+9. Add OpenAI, Anthropic, and Kimi adapters plus configurable OpenAI-compatible endpoints.
+10. Capture usage and calculate or estimate costs using versioned prices.
+11. Add the outbox and JSONL, OTLP/HTTP, and optional Control Plane exporters.
+12. Publish the Control Plane integration contract.
+13. Build multi-tenant ingestion with installation identity and deduplication.
+14. Aggregate usage, costs, and errors.
+15. Build the team dashboard.
+16. Add alerts.
+17. Add administrative audit history.
+18. Add RBAC, OIDC SSO, and enterprise SAML support.
+19. Add Runner mode after the proxy is stable.
+20. Add a Python SDK.
+21. Add framework and provider integrations.
 
-- local HTTP server;
-- OpenAI-compatible request forwarding;
-- provider abstraction;
-- SQLite event journal;
-- basic usage capture;
-- timeout and request limits;
-- local configuration;
-- synthetic integration tests.
-
-### Phase 2 — Provider coverage
-
-- Anthropic adapter;
-- Kimi adapter;
-- configurable OpenAI-compatible endpoints;
-- streaming support;
-- provider error normalization;
-- pricing catalog structure.
-
-### Phase 3 — Guardrails
-
-- repeated tool-call detection;
-- repeated error detection;
-- execution budgets;
-- policy decisions;
-- structured policy errors;
-- local alert hooks;
-- policy test fixtures.
-
-### Phase 4 — Telemetry export
-
-- OpenTelemetry traces and metrics;
-- OTLP/HTTP exporter;
-- reliable local outbox;
-- redaction pipeline;
-- custom HTTP exporter;
-- delivery and deduplication tests.
-
-### Phase 5 — Control Plane
-
-- tenant and organization model;
-- ingestion API;
-- installation registration;
-- event deduplication;
-- cost aggregation;
-- user and project dimensions;
-- first dashboard;
-- local-to-server synchronization.
-
-### Phase 6 — Team governance
-
-- RBAC;
-- global policies;
-- budget alerts;
-- audit history;
-- installation management;
-- OIDC SSO;
-- retention controls.
-
-### Phase 7 — Advanced execution control
-
-- Runner mode;
-- Python SDK;
-- agent lifecycle supervision;
-- framework integrations;
-- remote policy updates;
-- enterprise deployment options.
+The first milestone is a local gateway that starts without Docker, forwards and streams OpenAI-compatible requests, accepts Kimi through configuration, records tokens and latency, enforces repeated-error limits, and stores events while offline. The next milestones add redacted OTLP export and optional team cost aggregation, installation revocation, and remote policies. Billing, prompt management, marketplaces, and automatic evaluations are outside this initial sequence.
 
 ---
 
@@ -787,7 +755,7 @@ Contributions are welcome.
 
 Before opening a pull request:
 
-1. read the contribution guidelines;
+1. read this README and the public event contract when available;
 2. avoid adding provider secrets or real payloads;
 3. use synthetic test fixtures;
 4. add tests for privacy-sensitive behavior;
@@ -802,9 +770,9 @@ Provider adapters should not introduce provider credentials into the Control Pla
 
 ## License
 
-The Edge Gateway is intended to be released under the MIT License.
+This repository is licensed under the MIT License in [LICENSE](LICENSE); the planned Edge Gateway uses that license.
 
-The public protocol, schemas, examples, and documentation will be licensed according to the files in this repository.
+The public protocol, schemas, examples, and documentation in this repository use the same MIT License unless a file states otherwise.
 
 The Virgil hosted Control Plane is a separate commercial service. Availability, licensing, and self-hosting options for the Control Plane will be documented separately.
 
@@ -815,6 +783,3 @@ The Virgil hosted Control Plane is a separate commercial service. Availability, 
 Virgil is an observability and guardrails tool. It does not guarantee that an agent, provider, tool, or model is safe or correct.
 
 Organizations remain responsible for configuring policies, protecting credentials, reviewing telemetry, and complying with applicable privacy and data-retention requirements.
-```
-
-Esse README já separa claramente o que é open source, o que pertence ao SaaS e quais são os limites técnicos do proxy.
