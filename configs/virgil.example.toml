@@ -1,0 +1,15 @@
+[server]
+listen = "127.0.0.1:8787"
+log_level = "info"
+
+[storage]
+path = "./data/virgil.db"
+retention_days = 30
+
+[privacy]
+capture_prompts = false
+capture_responses = false
+capture_tool_arguments = false
+
+[control_plane]
+enabled = false

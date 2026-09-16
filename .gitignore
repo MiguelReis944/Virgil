@@ -1,0 +1,6 @@
+/data/
+/dist/
+*.local.toml
+*.db
+*.db-shm
+*.db-wal

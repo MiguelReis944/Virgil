@@ -8,7 +8,17 @@ It runs next to your application, intercepts calls to providers such as OpenAI, 
 
 The Edge Gateway is designed to work without an account, without a mandatory cloud service, and without sending prompts or responses anywhere by default.
 
-> Status: architecture and product definition phase. The interfaces described here are the target design and may change before the first stable release.
+> Status: early implementation. The local server and health endpoint exist; the proxy, policies, event journal, exporters, and Control Plane described below remain target behavior and may change before the first stable release.
+
+## Run the current local server
+
+Install Go 1.26 or newer, then run:
+
+```sh
+go run ./cmd/virgil serve --config configs/virgil.example.toml
+```
+
+`GET http://127.0.0.1:8787/health` returns JSON readiness including the SQLite connection state. The example binds loopback, creates a local database under `data/`, and does not require Docker, a provider credential, or a Control Plane. The current server does not yet expose the chat proxy route.
 
 ---
 
