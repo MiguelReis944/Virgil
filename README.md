@@ -8,7 +8,7 @@ It runs next to your application, intercepts calls to providers such as OpenAI, 
 
 The Edge Gateway is designed to work without an account, without a mandatory cloud service, and without sending prompts or responses anywhere by default.
 
-> Status: early implementation. The local server and health endpoint exist; the proxy, policies, event journal, exporters, and Control Plane described below remain target behavior and may change before the first stable release.
+> Status: early implementation. The local server, health endpoint, and JSON Chat Completions proxy exist. Streaming, policies, event journal, exporters, and Control Plane described below remain target behavior and may change before the first stable release.
 
 ## Run the current local server
 
@@ -18,7 +18,9 @@ Install Go 1.26 or newer, then run:
 go run ./cmd/virgil serve --config configs/virgil.example.toml
 ```
 
-`GET http://127.0.0.1:8787/health` returns JSON readiness including the SQLite connection state. The example binds loopback, creates a local database under `data/`, and does not require Docker, a provider credential, or a Control Plane. The current server does not yet expose the chat proxy route.
+`GET http://127.0.0.1:8787/health` returns JSON readiness including the SQLite connection state. The example binds loopback, creates a local database under `data/`, and does not require Docker, a provider credential, or a Control Plane.
+
+To use `POST /v1/chat/completions`, add a `[providers.<name>]` entry with `type = "openai-compatible"`, a provider `base_url` ending in `/v1`, and a configured `model`. The client sends its provider key as a bearer token. If the provider entry uses `api_key = "${PROVIDER_KEY}"`, set `VIRGIL_LOCAL_APP_TOKEN` in the gateway environment and send that separate token from the local client to unlock the configured key. An arbitrary bearer token is passed to the provider and never unlocks the configured key. The current proxy supports JSON text messages and tool calls; streaming requests are rejected until the streaming milestone.
 
 ---
 

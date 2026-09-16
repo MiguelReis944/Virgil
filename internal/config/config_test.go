@@ -53,11 +53,14 @@ func TestLoadRejectsMalformedAndMissingConfig(t *testing.T) {
 	}
 }
 
-func TestLoadDoesNotResolveMissingSecretToLiteral(t *testing.T) {
+func TestLoadKeepsProviderKeyReferenceLocal(t *testing.T) {
 	path := writeConfig(t, "[providers.openai]\napi_key = \"\u0024{OPENAI_API_KEY}\"\n")
-	_, err := Load(path, func(string) string { return "" })
-	if err == nil {
-		t.Fatal("accepted missing provider key environment variable")
+	cfg, err := Load(path, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Providers["openai"].APIKey != "" || cfg.Providers["openai"].APIKeyEnv != "OPENAI_API_KEY" {
+		t.Fatalf("provider key reference not preserved safely: %+v", cfg.Providers["openai"])
 	}
 }
 

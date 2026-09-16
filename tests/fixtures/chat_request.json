@@ -1,0 +1,16 @@
+{
+  "model": "fixture-model",
+  "messages": [
+    {"role": "user", "content": "synthetic greeting"}
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "fixture_tool",
+        "description": "Returns a synthetic value",
+        "parameters": {"type": "object", "properties": {}}
+      }
+    }
+  ]
+}

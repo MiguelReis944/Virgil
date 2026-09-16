@@ -49,7 +49,7 @@ type ProviderConfig struct {
 
 var envReference = regexp.MustCompile(`^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$`)
 
-func Load(path string, getenv func(string) string) (Config, error) {
+func Load(path string, _ func(string) string) (Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}, fmt.Errorf("read config: %w", err)
@@ -88,9 +88,6 @@ func Load(path string, getenv func(string) string) (Config, error) {
 			match := envReference.FindStringSubmatch(provider.APIKey)
 			if match == nil {
 				return Config{}, fmt.Errorf("provider %s api_key must reference an environment variable", name)
-			}
-			if getenv(match[1]) == "" {
-				return Config{}, fmt.Errorf("provider %s api_key environment variable is unset", name)
 			}
 			provider.APIKeyEnv = match[1]
 			provider.APIKey = ""

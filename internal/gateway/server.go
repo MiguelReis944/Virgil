@@ -6,19 +6,27 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/MiguelReis944/Virgil/internal/config"
 )
 
 type Dependencies struct {
-	DB *sql.DB
+	DB     *sql.DB
+	Client *http.Client
+	Getenv func(string) string
 }
 
-func NewServer(_ config.Config, deps Dependencies) (http.Handler, error) {
+func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
 	if deps.DB == nil {
 		return nil, errors.New("database connection is required")
 	}
+	router, err := newRouter(cfg, deps.Client, deps.Getenv)
+	if err != nil {
+		return nil, err
+	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/chat/completions", router.chat)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		status := http.StatusOK
 		body := struct {
@@ -38,7 +46,13 @@ func NewServer(_ config.Config, deps Dependencies) (http.Handler, error) {
 }
 
 func ListenAndServe(ctx context.Context, address string, handler http.Handler) error {
-	srv := &http.Server{Addr: address, Handler: handler}
+	srv := &http.Server{
+		Addr:              address,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 16,
+	}
 	errs := make(chan error, 1)
 	go func() {
 		errs <- srv.ListenAndServe()

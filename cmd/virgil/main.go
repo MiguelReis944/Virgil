@@ -51,7 +51,7 @@ func run(args []string) error {
 		return err
 	}
 	defer db.Close()
-	handler, err := gateway.NewServer(cfg, gateway.Dependencies{DB: db})
+	handler, err := gateway.NewServer(cfg, gateway.Dependencies{DB: db, Getenv: os.Getenv})
 	if err != nil {
 		return err
 	}
