@@ -1,0 +1,31 @@
+# Pricing configuration for cost estimation.
+# Costs computed here are estimates of billing, not provider invoices.
+# Update version and entries when provider pricing changes.
+
+[pricing]
+version = "2024-01"
+currency = "USD"
+
+# Per-model token prices in currency units per token.
+# cached_per_token applies to cached (prompt-cache) input tokens;
+# the remaining input tokens use input_per_token.
+
+[pricing.models."gpt-4o"]
+input_per_token  = "0.0000025"
+output_per_token = "0.00001"
+cached_per_token = "0.00000125"
+
+[pricing.models."gpt-4o-mini"]
+input_per_token  = "0.00000015"
+output_per_token = "0.0000006"
+cached_per_token = "0.000000075"
+
+[pricing.models."claude-opus-4-5"]
+input_per_token  = "0.000015"
+output_per_token = "0.000075"
+cached_per_token = "0.0000015"
+
+[pricing.models."claude-sonnet-4-5"]
+input_per_token  = "0.000003"
+output_per_token = "0.000015"
+cached_per_token = "0.0000003"

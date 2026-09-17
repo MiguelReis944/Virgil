@@ -14,6 +14,7 @@ import (
 
 	"github.com/MiguelReis944/Virgil/internal/config"
 	"github.com/MiguelReis944/Virgil/internal/policies"
+	"github.com/MiguelReis944/Virgil/internal/pricing"
 	"github.com/MiguelReis944/Virgil/internal/providers"
 	"github.com/MiguelReis944/Virgil/internal/redaction"
 	"github.com/MiguelReis944/Virgil/internal/telemetry"
@@ -35,6 +36,7 @@ type router struct {
 	installationID string
 	policy         *policies.Engine
 	guardrails     config.GuardrailsConfig
+	pricingCfg     config.PricingConfig
 }
 
 func newRouter(cfg config.Config, client *http.Client, getenv func(string) string) (*router, error) {
@@ -44,7 +46,7 @@ func newRouter(cfg config.Config, client *http.Client, getenv func(string) strin
 	if getenv == nil {
 		getenv = func(string) string { return "" }
 	}
-	r := &router{models: make(map[string]route), getenv: getenv, guardrails: cfg.Guardrails}
+	r := &router{models: make(map[string]route), getenv: getenv, guardrails: cfg.Guardrails, pricingCfg: cfg.Pricing}
 	registry, err := providers.NewRegistry(cfg, client)
 	if err != nil {
 		return nil, err
@@ -161,6 +163,24 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 		if router.recorder == nil {
 			return
 		}
+		u := telemetry.FromResult(result.UsageSource, result.InputTokens, result.OutputTokens, result.CachedTokens)
+		var actualCost, estimatedCost *string
+		var pricingVersion, costCurrency string
+		if entry, ok := router.pricingCfg.Models[result.ResponseModel]; ok && entry.InputPerToken != "" {
+			table := pricing.Table{
+				Version:        router.pricingCfg.Version,
+				Currency:       router.pricingCfg.Currency,
+				InputPerToken:  entry.InputPerToken,
+				OutputPerToken: entry.OutputPerToken,
+				CachedPerToken: entry.CachedPerToken,
+			}
+			if c, err := pricing.Calculate(u, table); err == nil {
+				actualCost = c.ActualCost
+				estimatedCost = c.EstimatedCost
+				pricingVersion = router.pricingCfg.Version
+				costCurrency = router.pricingCfg.Currency
+			}
+		}
 		event, err := telemetry.Build(telemetry.Attempt{
 			InstallationID: router.installationID,
 			RunID:          runID,
@@ -176,6 +196,10 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 			Status:         result.Status,
 			ErrorCode:      result.ErrorCode,
 			PolicyDecision: policyDecision,
+			ActualCost:     actualCost,
+			EstimatedCost:  estimatedCost,
+			PricingVersion: pricingVersion,
+			CostCurrency:   costCurrency,
 			StartedAt:      started,
 			EndedAt:        time.Now(),
 		})

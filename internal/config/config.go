@@ -17,6 +17,19 @@ type Config struct {
 	Privacy      PrivacyConfig             `toml:"privacy"`
 	Guardrails   GuardrailsConfig          `toml:"guardrails"`
 	Providers    map[string]ProviderConfig `toml:"providers"`
+	Pricing      PricingConfig             `toml:"pricing"`
+}
+
+type PricingConfig struct {
+	Version  string                     `toml:"version"`
+	Currency string                     `toml:"currency"` // ISO 4217
+	Models   map[string]ModelPriceEntry `toml:"models"`
+}
+
+type ModelPriceEntry struct {
+	InputPerToken  string `toml:"input_per_token"`
+	OutputPerToken string `toml:"output_per_token"`
+	CachedPerToken string `toml:"cached_per_token"`
 }
 
 type GuardrailsConfig struct {
@@ -119,6 +132,24 @@ func Load(path string, _ func(string) string) (Config, error) {
 			if !policyLabel.MatchString(label) {
 				return Config{}, fmt.Errorf("invalid guardrail allowlist entry")
 			}
+		}
+	}
+	if cfg.Pricing.Currency != "" {
+		var currencyPattern = regexp.MustCompile(`^[A-Z]{3}$`)
+		if !currencyPattern.MatchString(cfg.Pricing.Currency) {
+			return Config{}, fmt.Errorf("invalid pricing currency")
+		}
+	}
+	var decimalPrice = regexp.MustCompile(`^(0|[1-9][0-9]*)(\.[0-9]+)?$`)
+	for model, entry := range cfg.Pricing.Models {
+		_ = model
+		for _, p := range []string{entry.InputPerToken, entry.OutputPerToken} {
+			if p != "" && !decimalPrice.MatchString(p) {
+				return Config{}, fmt.Errorf("invalid pricing decimal")
+			}
+		}
+		if entry.CachedPerToken != "" && !decimalPrice.MatchString(entry.CachedPerToken) {
+			return Config{}, fmt.Errorf("invalid pricing decimal")
 		}
 	}
 	for name, provider := range cfg.Providers {
