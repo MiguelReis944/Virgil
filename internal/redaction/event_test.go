@@ -12,15 +12,15 @@ func fixtureEvent(t *testing.T) telemetry.Event {
 	now := time.Now()
 	event, err := telemetry.Build(telemetry.Attempt{
 		InstallationID: "install_fixture",
-		RunID: "run_fixture",
-		TraceID: "00000000000000000000000000000001",
-		SpanID: "0000000000000001",
-		Provider: "fixture",
+		RunID:          "run_fixture",
+		TraceID:        "00000000000000000000000000000001",
+		SpanID:         "0000000000000001",
+		Provider:       "fixture",
 		RequestedModel: "fixture-model",
-		UsageSource: "unknown",
-		Status: "success",
-		StartedAt: now,
-		EndedAt: now,
+		UsageSource:    "unknown",
+		Status:         "success",
+		StartedAt:      now,
+		EndedAt:        now,
 	})
 	if err != nil {
 		t.Fatal(err)

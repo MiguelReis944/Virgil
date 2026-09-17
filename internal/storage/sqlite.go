@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MiguelReis944/Virgil/internal/telemetry"
 	"github.com/MiguelReis944/Virgil/internal/redaction"
+	"github.com/MiguelReis944/Virgil/internal/telemetry"
 )
 
 //go:embed migrations/*.sql
