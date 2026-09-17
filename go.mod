@@ -4,6 +4,8 @@ go 1.26
 
 require (
 	github.com/pelletier/go-toml/v2 v2.4.3
+	go.opentelemetry.io/proto/otlp v1.7.0
+	google.golang.org/protobuf v1.36.6
 	modernc.org/sqlite v1.59.0
 )
 
