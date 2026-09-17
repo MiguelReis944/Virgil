@@ -1,0 +1,253 @@
+openapi: "3.1.0"
+info:
+  title: Virgil Control Plane API
+  version: "1.0"
+  description: >
+    Wire contract between a Virgil Edge Gateway and a Virgil Control Plane.
+    A third-party service can implement this protocol without reading any
+    internal Go types. The gateway never requires a Control Plane; its absence
+    does not prevent local proxying, recording, or policy enforcement.
+
+servers:
+  - url: https://cp.example.invalid
+    description: Operator-hosted Control Plane
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        Scoped installation credential obtained via /v1/installations/enroll.
+        The server derives tenant identity from this credential; the
+        organization_id in event payloads is informational only.
+
+  schemas:
+    OneTimeToken:
+      type: object
+      required: [one_time_token]
+      properties:
+        one_time_token:
+          type: string
+          description: Single-use token issued by the Control Plane operator.
+
+    Enrollment:
+      type: object
+      required: [installation_id, credential]
+      properties:
+        installation_id:
+          type: string
+          description: Stable identifier for this gateway installation.
+        credential:
+          type: string
+          description: Scoped bearer token for subsequent API calls.
+
+    BatchEvent:
+      type: object
+      required: [event_id, payload]
+      properties:
+        event_id:
+          type: string
+          description: Stable, client-generated event identifier (UUID v4 or similar).
+        payload:
+          type: object
+          description: >
+            Redacted telemetry event. Content fields (prompts, responses, tool
+            arguments) are never included. See schemas/policy.v1.example.json
+            for the full field set.
+
+    BatchRequest:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/BatchEvent"
+          minItems: 1
+          maxItems: 1000
+
+    BatchResponse:
+      type: object
+      required: [accepted_ids]
+      properties:
+        accepted_ids:
+          type: array
+          items:
+            type: string
+          description: Event IDs that were durably stored.
+        rejections:
+          type: object
+          additionalProperties:
+            type: string
+          description: >
+            Map of event_id → rejection_code for events that were not stored.
+            The gateway will not retry permanently rejected events.
+
+    CPLimits:
+      type: object
+      description: >
+        Policy limits the Control Plane may set. The gateway always enforces
+        the stricter of local and remote values. The remote policy cannot raise
+        a local hard cap, change endpoint or export configuration, or enable
+        content capture.
+      properties:
+        max_calls_per_run:
+          type: integer
+          minimum: 0
+          description: 0 means unlimited.
+        max_cost_per_run_usd:
+          type: string
+          pattern: "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+          description: Empty string means unlimited.
+        max_input_tokens_per_run:
+          type: integer
+          minimum: 0
+        max_output_tokens_per_run:
+          type: integer
+          minimum: 0
+        max_total_tokens_per_run:
+          type: integer
+          minimum: 0
+        max_duration_seconds:
+          type: integer
+          minimum: 0
+        max_tool_calls_per_run:
+          type: integer
+          minimum: 0
+        allowed_providers:
+          type: array
+          items:
+            type: string
+          description: Empty list means all providers allowed.
+        allowed_models:
+          type: array
+          items:
+            type: string
+          description: Empty list means all models allowed.
+        allowed_tools:
+          type: array
+          items:
+            type: string
+          description: Empty list means all tools allowed.
+
+    PolicyEnvelope:
+      type: object
+      required: [version, limits]
+      properties:
+        version:
+          type: integer
+          description: >
+            Monotonically increasing version number. The gateway ignores
+            envelopes with a version ≤ the last successfully applied version.
+        limits:
+          $ref: "#/components/schemas/CPLimits"
+
+    RevokeRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          description: Human-readable reason for revocation (audit log).
+
+paths:
+  /v1/installations/enroll:
+    post:
+      operationId: enrollInstallation
+      summary: Exchange a one-time token for an installation credential
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OneTimeToken"
+      responses:
+        "200":
+          description: Enrollment successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Enrollment"
+        "400":
+          description: Invalid or malformed request
+        "401":
+          description: One-time token invalid or already used
+
+  /v1/events/batch:
+    post:
+      operationId: submitEventBatch
+      summary: Submit a batch of telemetry events
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchRequest"
+      responses:
+        "200":
+          description: Batch processed (may include partial rejections)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchResponse"
+        "401":
+          description: Credential invalid or revoked
+        "403":
+          description: Credential does not have batch access
+        "429":
+          description: Rate limited; retry after Retry-After seconds
+
+  /v1/policies/current:
+    get:
+      operationId: getCurrentPolicy
+      summary: Fetch the current policy for this installation
+      parameters:
+        - name: If-None-Match
+          in: header
+          schema:
+            type: string
+          description: ETag from previous response; 304 returned if unchanged
+      responses:
+        "200":
+          description: Current policy
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyEnvelope"
+        "304":
+          description: Policy unchanged since last fetch
+        "401":
+          description: Credential invalid or revoked
+
+  /v1/installations/{id}/revoke:
+    post:
+      operationId: revokeInstallation
+      summary: Revoke an installation credential (admin only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RevokeRequest"
+      responses:
+        "200":
+          description: Installation revoked
+        "401":
+          description: Not an administrator
+        "404":
+          description: Installation not found

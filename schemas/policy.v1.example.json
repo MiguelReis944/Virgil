@@ -1,0 +1,15 @@
+{
+  "version": 42,
+  "limits": {
+    "max_calls_per_run": 100,
+    "max_cost_per_run_usd": "0.50",
+    "max_input_tokens_per_run": 50000,
+    "max_output_tokens_per_run": 20000,
+    "max_total_tokens_per_run": 70000,
+    "max_duration_seconds": 300,
+    "max_tool_calls_per_run": 20,
+    "allowed_providers": ["anthropic", "openai"],
+    "allowed_models": ["claude-sonnet-4-5", "gpt-4o"],
+    "allowed_tools": []
+  }
+}
