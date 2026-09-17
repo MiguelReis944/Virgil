@@ -182,13 +182,30 @@ func (a *OpenAICompatible) Translate(resp *http.Response, downstream http.Respon
 		return Result{}, errors.New("provider response exceeds limit")
 	}
 	var parsed struct {
-		Model string       `json:"model"`
-		Usage *openaiUsage `json:"usage"`
+		Model   string       `json:"model"`
+		Usage   *openaiUsage `json:"usage"`
+		Choices []struct {
+			Message struct {
+				ToolCalls []struct {
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"message"`
+		} `json:"choices"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return Result{}, errors.New("invalid provider JSON")
 	}
 	result := Result{ResponseModel: parsed.Model, Status: "success", UsageSource: "unknown"}
+	for _, choice := range parsed.Choices {
+		for _, call := range choice.Message.ToolCalls {
+			fingerprint := newToolStreamFingerprint()
+			fingerprint.add(call.Function.Name, call.Function.Arguments)
+			result.ToolCallFingerprints = append(result.ToolCallFingerprints, fingerprint.sum())
+		}
+	}
 	if err := applyUsage(&result, parsed.Usage); err != nil {
 		return Result{}, err
 	}

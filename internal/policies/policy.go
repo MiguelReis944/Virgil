@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/MiguelReis944/Virgil/internal/storage"
@@ -49,8 +50,15 @@ type Decision struct {
 }
 
 type Engine struct {
-	journal *storage.Journal
-	limits  Limits
+	journal             *storage.Journal
+	limits              Limits
+	repetitionMu        sync.Mutex
+	repetitions         map[string]*repetitionState
+	repetitionOrder     []string
+	providerRepetitions map[string]*callRepetitionState
+	providerOrder       []string
+	callRepetitions     map[string]*callRepetitionState
+	callOrder           []string
 }
 
 func NewEngine(journal *storage.Journal, limits Limits) (*Engine, error) {
@@ -65,7 +73,12 @@ func NewEngine(journal *storage.Journal, limits Limits) (*Engine, error) {
 	if _, err := decimal(limits.MaxCostPerRunUSD); err != nil {
 		return nil, fmt.Errorf("cost cap: %w", err)
 	}
-	return &Engine{journal: journal, limits: limits}, nil
+	return &Engine{
+		journal: journal, limits: limits,
+		repetitions:         make(map[string]*repetitionState),
+		providerRepetitions: make(map[string]*callRepetitionState),
+		callRepetitions:     make(map[string]*callRepetitionState),
+	}, nil
 }
 
 func allowed(list []string, value string) bool {
@@ -88,6 +101,12 @@ func (e *Engine) Preflight(ctx context.Context, facts RequestFacts) (Decision, e
 	runID, err := telemetry.ResolveRunID(facts.RunID)
 	if err != nil {
 		return Decision{}, err
+	}
+	if e.repeatedError(runID) {
+		return block(runID, "repeated_tool_error", "repeated_error_limit", 4, 3), nil
+	}
+	if e.repeatedToolCall(runID) {
+		return block(runID, "repeated_tool_call", "repeated_call_limit", 4, 3), nil
 	}
 	if !allowed(e.limits.AllowedProviders, facts.Provider) {
 		return block(runID, "provider_not_allowed", "allowed_providers", 0, 0), nil

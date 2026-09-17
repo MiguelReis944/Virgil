@@ -8,7 +8,7 @@ It runs next to your application, intercepts calls to providers such as OpenAI, 
 
 The Edge Gateway is designed to work without an account, without a mandatory cloud service, and without sending prompts or responses anywhere by default.
 
-> Status: early implementation. The local server, health endpoint, JSON/SSE Chat Completions proxy, canonical event schema, SQLite journal, metadata redaction, and deterministic local policy engine exist. Repeated-error detection, exporters, and the Control Plane remain planned.
+> Status: early implementation. The local server, health endpoint, JSON/SSE Chat Completions proxy, canonical event schema, SQLite journal, metadata redaction, deterministic local policy engine, and in-memory repeated-error detection exist. Exporters and the Control Plane remain planned.
 
 ## MVP milestones
 
@@ -27,6 +27,8 @@ go run ./cmd/virgil serve --config configs/virgil.example.toml
 `GET http://127.0.0.1:8787/health` returns JSON readiness including the SQLite connection state. The example binds loopback, creates a local database under `data/`, and does not require Docker, a provider credential, or a Control Plane.
 
 To use `POST /v1/chat/completions`, add a `[providers.<name>]` entry with `type = "openai-compatible"`, a provider `base_url` ending in `/v1`, and a configured `model`. The client sends its provider key as a bearer token. If the provider entry uses `api_key = "${PROVIDER_KEY}"`, set `VIRGIL_LOCAL_APP_TOKEN` in the gateway environment and send that separate token from the local client to unlock the configured key. An arbitrary bearer token is passed to the provider and never unlocks the configured key. The current proxy supports JSON text messages, tool calls, and SSE streaming. Unsupported fields return an error before provider dispatch.
+
+With `VIRGIL_LOCAL_APP_TOKEN` set, the application can report external tool outcomes through `POST /v1/tool-results` using the dedicated `X-Virgil-App-Token` header. The JSON body accepts only `run_id`, `tool_call_id`, `tool_name`, `status` (`success` or `error`), and a normalized `error_code` for errors. It rejects arguments, results, and free text. Three consecutive equivalent tool errors, provider errors, or identical provider tool calls within one run block the next gateway request before provider dispatch. These repetition sequences are bounded in memory and reset on gateway restart; call and budget counters in SQLite survive restart. The gateway can block only traffic routed through it and does not terminate an external agent process.
 
 The local HTTP server gives request headers five seconds and the entire request read fifteen seconds. Chat request bodies are limited to 1 MiB; a body that stalls returns a generic 408 response and one above the limit returns 413. The server does not set a global write deadline because it streams SSE frames. On process interruption, active request contexts and upstream streams are cancelled; graceful shutdown waits up to five seconds before closing remaining connections. A configured provider `base_url` is trusted local configuration and receives the provider bearer token, so use only endpoints you trust.
 

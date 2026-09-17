@@ -7,13 +7,15 @@ import (
 )
 
 type Result struct {
-	ResponseModel string
-	InputTokens   *int64
-	OutputTokens  *int64
-	CachedTokens  *int64
-	UsageSource   string
-	ErrorCode     string
-	Status        string
+	ResponseModel        string
+	InputTokens          *int64
+	OutputTokens         *int64
+	CachedTokens         *int64
+	UsageSource          string
+	ErrorCode            string
+	Status               string
+	ToolCallFingerprints []string
+	toolStreams          map[toolStreamKey]*toolStreamFingerprint
 }
 
 type Adapter interface {

@@ -16,6 +16,8 @@ The implemented Edge Gateway now bounds complete HTTP request reads to fifteen s
 
 The **local Edge MVP** closes when Tasks 1–14 demonstrate offline proxying, private events, local policies including repeated-error blocking, JSONL/OTLP export, contract compatibility, and reproducible end-to-end tests without a service. The **integrated MVP** also requires Tasks 15–18 in a separate Control Plane repository, with tenant-scoped ingestion, aggregation, revocation, and remote policy demonstrated end to end. Tasks 19–20 (Runner and SDK) follow the stable Edge.
 
+Task 8 now accepts bounded metadata-only tool feedback behind the dedicated local application token, detects repeated normalized tool errors and provider errors, and fingerprints provider tool calls in JSON/SSE without persisting arguments. Repetition state is bounded in memory and resets on gateway restart; the SQLite call and budget counters remain durable. The proxy blocks only intercepted requests and does not supervise the external agent process. Task 9 is next.
+
 ## Global constraints
 
 - Preserve the MIT license and keep all examples and test payloads synthetic.

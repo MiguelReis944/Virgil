@@ -113,15 +113,28 @@ func inspectSSEFrame(frame []byte, result *Result) (bool, error) {
 		return false, errors.New("provider stream error event")
 	}
 	if payload == "[DONE]" {
+		result.finishToolDeltas()
 		return true, nil
 	}
 	if payload == "" {
 		return false, nil
 	}
 	var chunk struct {
-		Model string          `json:"model"`
-		Error json.RawMessage `json:"error"`
-		Usage *openaiUsage    `json:"usage"`
+		Model   string          `json:"model"`
+		Error   json.RawMessage `json:"error"`
+		Usage   *openaiUsage    `json:"usage"`
+		Choices []struct {
+			Index int `json:"index"`
+			Delta struct {
+				ToolCalls []struct {
+					Index    int `json:"index"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"delta"`
+		} `json:"choices"`
 	}
 	if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
 		return false, errors.New("invalid provider SSE data")
@@ -131,6 +144,13 @@ func inspectSSEFrame(frame []byte, result *Result) (bool, error) {
 	}
 	if chunk.Model != "" {
 		result.ResponseModel = chunk.Model
+	}
+	for _, choice := range chunk.Choices {
+		for _, call := range choice.Delta.ToolCalls {
+			if err := result.addToolDelta(choice.Index, call.Index, call.Function.Name, call.Function.Arguments); err != nil {
+				return false, err
+			}
+		}
 	}
 	if err := applyUsage(result, chunk.Usage); err != nil {
 		return false, err

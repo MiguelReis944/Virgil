@@ -50,6 +50,7 @@ func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", router.chat)
+	mux.HandleFunc("POST /v1/tool-results", router.toolResults)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		status := http.StatusOK
 		body := struct {

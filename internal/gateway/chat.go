@@ -140,6 +140,20 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 	var policyDecision *telemetry.PolicyDecision
 	var reservationID string
 	defer func() {
+		if router.policy != nil && reservationID != "" && len(result.ToolCallFingerprints) > 0 {
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 2*time.Second)
+			if err := router.policy.RecordToolCalls(ctx, runID, result.ToolCallFingerprints); err != nil {
+				slog.Error("tool repetition update failed", "code", "tool_repetition_failed")
+			}
+			cancel()
+		}
+		if router.policy != nil && reservationID != "" && (result.Status == "provider_error" || result.Status == "transport_error" || result.Status == "success") {
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 2*time.Second)
+			if err := router.policy.RecordProviderOutcome(ctx, runID, result.Status, result.ErrorCode); err != nil {
+				slog.Error("provider repetition update failed", "code", "provider_repetition_failed")
+			}
+			cancel()
+		}
 		if router.policy != nil && reservationID != "" {
 			ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 2*time.Second)
 			if err := router.policy.Postflight(ctx, policies.OutcomeFacts{RunID: runID, ReservationID: reservationID, InputTokens: result.InputTokens, OutputTokens: result.OutputTokens}); err != nil {
