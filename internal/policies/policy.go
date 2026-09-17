@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
 	"sync"
 	"time"
 
+	"github.com/MiguelReis944/Virgil/internal/controlplane"
 	"github.com/MiguelReis944/Virgil/internal/storage"
 	"github.com/MiguelReis944/Virgil/internal/telemetry"
 )
@@ -184,4 +186,84 @@ func (e *Engine) Postflight(ctx context.Context, facts OutcomeFacts) error {
 		return fmt.Errorf("actual cost: %w", err)
 	}
 	return e.journal.ReconcilePolicy(ctx, storage.PolicyOutcome{RunID: facts.RunID, ReservationID: facts.ReservationID, InputTokens: input, OutputTokens: output, ToolCalls: tools, CostUSD: facts.CostUSD})
+}
+
+// Merge returns effective Limits by taking the stricter of local and remote.
+// Remote cannot raise a local hard cap; endpoint and export fields are local-only.
+// Returns an error if the remote version is stale (≤ lastVersion, when lastVersion > 0).
+func Merge(local Limits, remote controlplane.PolicyEnvelope, lastVersion int64) (Limits, error) {
+	if lastVersion > 0 && remote.Version <= lastVersion {
+		return Limits{}, fmt.Errorf("stale policy version %d (last seen %d)", remote.Version, lastVersion)
+	}
+	result := local
+	result.MaxCallsPerRun = stricterInt(local.MaxCallsPerRun, remote.Limits.MaxCallsPerRun)
+	result.MaxInputTokensPerRun = stricterInt(local.MaxInputTokensPerRun, remote.Limits.MaxInputTokensPerRun)
+	result.MaxOutputTokensPerRun = stricterInt(local.MaxOutputTokensPerRun, remote.Limits.MaxOutputTokensPerRun)
+	result.MaxTotalTokensPerRun = stricterInt(local.MaxTotalTokensPerRun, remote.Limits.MaxTotalTokensPerRun)
+	result.MaxDurationSeconds = stricterInt(local.MaxDurationSeconds, remote.Limits.MaxDurationSeconds)
+	result.MaxToolCallsPerRun = stricterInt(local.MaxToolCallsPerRun, remote.Limits.MaxToolCallsPerRun)
+	merged, err := stricterCost(local.MaxCostPerRunUSD, remote.Limits.MaxCostPerRunUSD)
+	if err != nil {
+		return Limits{}, fmt.Errorf("merge cost: %w", err)
+	}
+	result.MaxCostPerRunUSD = merged
+	result.AllowedProviders = stricterList(local.AllowedProviders, remote.Limits.AllowedProviders)
+	result.AllowedModels = stricterList(local.AllowedModels, remote.Limits.AllowedModels)
+	result.AllowedTools = stricterList(local.AllowedTools, remote.Limits.AllowedTools)
+	return result, nil
+}
+
+// stricterInt returns the smaller non-zero value; 0 means unlimited.
+func stricterInt(a, b int64) int64 {
+	if a == 0 {
+		return b
+	}
+	if b == 0 {
+		return a
+	}
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// stricterCost returns the smaller non-empty cost; empty means unlimited.
+func stricterCost(a, b string) (string, error) {
+	if a == "" {
+		return b, nil
+	}
+	if b == "" {
+		return a, nil
+	}
+	ra, ok1 := new(big.Rat).SetString(a)
+	rb, ok2 := new(big.Rat).SetString(b)
+	if !ok1 || !ok2 {
+		return "", errors.New("invalid cost string")
+	}
+	if ra.Cmp(rb) <= 0 {
+		return a, nil
+	}
+	return b, nil
+}
+
+// stricterList returns the intersection if both are non-empty; otherwise the non-empty one.
+// An empty list means "all allowed".
+func stricterList(local, remote []string) []string {
+	if len(local) == 0 {
+		return remote
+	}
+	if len(remote) == 0 {
+		return local
+	}
+	remoteSet := make(map[string]bool, len(remote))
+	for _, v := range remote {
+		remoteSet[v] = true
+	}
+	var out []string
+	for _, v := range local {
+		if remoteSet[v] {
+			out = append(out, v)
+		}
+	}
+	return out
 }

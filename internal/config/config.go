@@ -59,8 +59,9 @@ type StorageConfig struct {
 }
 
 type ControlPlaneConfig struct {
-	Enabled  bool   `toml:"enabled"`
-	Endpoint string `toml:"endpoint"`
+	Enabled        bool   `toml:"enabled"`
+	Endpoint       string `toml:"endpoint"`
+	CredentialPath string `toml:"credential_path"` // local file holding the scoped credential; gitignored
 }
 
 type PrivacyConfig struct {
