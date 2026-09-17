@@ -8,7 +8,13 @@ It runs next to your application, intercepts calls to providers such as OpenAI, 
 
 The Edge Gateway is designed to work without an account, without a mandatory cloud service, and without sending prompts or responses anywhere by default.
 
-> Status: early implementation. The local server, health endpoint, JSON/SSE Chat Completions proxy, canonical event schema, and SQLite event journal exist. Redaction, policies, exporters, and Control Plane described below remain target behavior and may change before the first stable release.
+> Status: early implementation. The local server, health endpoint, JSON/SSE Chat Completions proxy, canonical event schema, SQLite journal, metadata redaction, and deterministic local policy engine exist. Repeated-error detection, exporters, and the Control Plane remain planned.
+
+## MVP milestones
+
+**Local Edge Gateway MVP** means the gateway can be installed and demonstrated without an account, Docker, or Control Plane: JSON/SSE proxying, token and latency provenance, local guardrails including the fourth repeated-error block, private offline events, local JSONL export, optional OTLP, and end-to-end tests. It is not complete yet.
+
+**Integrated MVP** additionally requires the public Edge-to-service contract and a separately owned Control Plane with tenant-scoped ingestion and aggregation, installation revocation, and stricter remote policy proven end to end. It is not complete. The Runner and Python SDK follow a stable Edge release.
 
 ## Run the current local server
 

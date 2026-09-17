@@ -11,5 +11,23 @@ capture_prompts = false
 capture_responses = false
 capture_tool_arguments = false
 
+# Limits are disabled when omitted or set to zero. A hard cost cap requires
+# estimated_cost_per_call_usd until versioned pricing is available; without it,
+# preflight blocks with cost_unavailable.
+[guardrails]
+max_requests_per_run = 0
+max_cost_per_run_usd = ""
+max_input_tokens_per_run = 0
+max_output_tokens_per_run = 0
+max_total_tokens_per_run = 0
+max_duration_seconds = 0
+max_tool_calls_per_run = 0
+allowed_providers = []
+allowed_models = []
+allowed_tools = []
+estimated_cost_per_call_usd = ""
+estimated_input_tokens_per_call = 0
+estimated_output_tokens_per_call = 0
+
 [control_plane]
 enabled = false

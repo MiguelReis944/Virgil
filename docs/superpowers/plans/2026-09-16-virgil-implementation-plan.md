@@ -1,6 +1,6 @@
 # Virgil Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: use `executing-plans` task by task. The user reviews and makes every commit and push. Agents must not commit, push, configure automated publication, or delegate implementation.
+> **For agentic workers:** Use `executing-plans` task by task. After verifying a cohesive checkpoint, an agent may make a local commit containing only that checkpoint. Push and publication require an explicit user request. Independent, bounded subtasks may be delegated when available.
 
 **Goal:** Deliver a useful offline Edge Gateway, then an optional tenant-scoped Control Plane and supervised agent integrations.
 
@@ -12,7 +12,9 @@
 
 ## Quality hardening checkpoint (2026-09-17)
 
-The implemented Edge Gateway now bounds complete HTTP request reads to fifteen seconds while retaining the 1 MiB chat body limit. Slow bodies return a generic 408, and SSE still flushes incrementally without a global write deadline. Process cancellation propagates to active requests and upstream streams; graceful shutdown has a five-second deadline and closes remaining connections on expiry. Regression tests cover these behaviors, including a stalled handler and an immediate listener error. See [quality review](../../quality/2026-09-16-quality-review.md) for the actual validation results and remaining tool limitations. Tasks 7 onward remain planned.
+The implemented Edge Gateway now bounds complete HTTP request reads to fifteen seconds while retaining the 1 MiB chat body limit. Slow bodies return a generic 408, and SSE still flushes incrementally without a global write deadline. Process cancellation propagates to active requests and upstream streams; graceful shutdown has a five-second deadline and closes remaining connections on expiry. Task 7 has an initial local policy implementation with transactional call reservations, counter reconciliation, allowlists, and policy-block events. Its acceptance is being audited before Task 8. See [quality review](../../quality/2026-09-16-quality-review.md) for validation results and tool limitations.
+
+The **local Edge MVP** closes when Tasks 1–14 demonstrate offline proxying, private events, local policies including repeated-error blocking, JSONL/OTLP export, contract compatibility, and reproducible end-to-end tests without a service. The **integrated MVP** also requires Tasks 15–18 in a separate Control Plane repository, with tenant-scoped ingestion, aggregation, revocation, and remote policy demonstrated end to end. Tasks 19–20 (Runner and SDK) follow the stable Edge.
 
 ## Global constraints
 
@@ -24,15 +26,15 @@ The implemented Edge Gateway now bounds complete HTTP request reads to fifteen s
 - Every provider attempt and local policy block yields one canonical event. Unknown usage or price leaves cost null, not zero.
 - Export requires both a destination and an explicit field allowlist; a Control Plane is never an implicit destination.
 - No provider request is retried automatically. Only telemetry delivery uses retry.
-- Each task uses a red → green test cycle. At a reviewable task boundary, run the relevant commands, inspect the complete diff and privacy scan, then invite the user to commit. No agent commits or pushes.
+- Each code task uses a red → green test cycle. At a checkpoint boundary, run the focused and shared gates, inspect the complete diff and privacy scan, then make a local commit containing only the verified checkpoint. No push or publication without explicit authorization.
 
 ## Repository boundaries and checkpoints
 
 Paths in Tasks 1–14 and 19–20 are relative to this public repository. Paths in Tasks 15–18 are relative to a **separate Control Plane repository root**; they must not be created in Virgil. The Control Plane repository must be selected before Task 15, with its own access control, license, Git history, and deployment decisions. The public protocol in Task 14 is sufficient for an independent implementation.
 
-Each numbered task is a human commit checkpoint after its tests pass. Tasks 1–14 form the Edge and protocol sequence; Tasks 15–18 form the optional team service; Tasks 19–20 follow a stable proxy. A reviewer can reject one checkpoint without accepting later ones. The user performs Git operations in the repository that owns the changed files, and updates the harness submodule pointer separately after a Virgil commit.
+Each numbered task is a local commit checkpoint after its tests pass. Tasks 1–14 form the Edge and protocol sequence; Tasks 15–18 form the optional team service; Tasks 19–20 follow a stable proxy. The agent commits only its verified files in the repository that owns them. Push remains a separate user decision. The harness submodule pointer is updated separately after a Virgil commit.
 
-For each task: (1) write the named failing test, (2) run its focused command and observe failure for the missing behavior, (3) add the listed implementation, (4) run the focused command and the shared gate, (5) review the diff and stop for the user's checkpoint. Test assertions below are the minimum required cases, not permission to omit adjacent failure cases.
+For each code task: (1) write the named failing test, (2) run its focused command and observe failure for the missing behavior, (3) add the listed implementation, (4) run the focused command and the shared gate, (5) review the diff and commit the verified checkpoint locally. Test assertions below are the minimum required cases, not permission to omit adjacent failure cases.
 
 ### Task 1: Local server, configuration, and health
 
@@ -276,7 +278,7 @@ For each task: (1) write the named failing test, (2) run its focused command and
 
 ## Shared validation gate for every public-repository checkpoint
 
-Run the focused command for the task, then `go test ./...`, `go vet ./...`, `go build ./cmd/virgil`, and the synthetic privacy suite `go test ./tests/privacy` once those packages exist. For Task 1 before the privacy suite exists, scan changed files manually for secrets and private references. Review `git diff --check`, `git diff`, `git status --short`, and all untracked files. Check `git log -1` before and after to verify the agent did not commit; inspect the configured remote without pushing. The human decides when to commit and push.
+Run the focused command for the task, then `go test ./...`, `go vet ./...`, `go build ./cmd/virgil`, and the synthetic privacy suite `go test ./tests/privacy` once those packages exist. For Task 1 before the privacy suite exists, scan changed files manually for secrets and private references. Review `git diff --check`, `git diff`, `git status --short`, and all untracked files. Commit only the completed checkpoint locally; inspect the configured remote without pushing.
 
 Before claiming the Edge MVP, additionally run:
 
