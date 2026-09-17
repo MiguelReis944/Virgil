@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -225,5 +226,120 @@ func TestUnsupportedFeatureDoesNotDispatch(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != 400 || calls.Load() != 0 {
 		t.Fatalf("status=%d provider calls=%d", rec.Code, calls.Load())
+	}
+}
+
+func TestConfiguredCapabilityRejectsBeforeDispatch(t *testing.T) {
+	var calls atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+	}))
+	defer upstream.Close()
+	db, err := storage.Open(filepath.Join(t.TempDir(), "virgil.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	cfg := config.Config{Providers: map[string]config.ProviderConfig{
+		"kimi": {Type: "kimi", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Capabilities: []string{}},
+	}}
+	handler, err := NewServer(cfg, Dependencies{DB: db})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"fixture-model","messages":[{"role":"user","content":"synthetic"}],"stream":true}`))
+	req.Header.Set("Authorization", "Bearer synthetic-key")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	if resp.Code != http.StatusBadRequest || calls.Load() != 0 {
+		t.Fatalf("status=%d calls=%d", resp.Code, calls.Load())
+	}
+}
+
+func TestKimiConfiguredEndpointAndModel(t *testing.T) {
+	type seenRequest struct{ path, model string }
+	seen := make(chan seenRequest, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		seen <- seenRequest{path: r.URL.Path, model: request.Model}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"kimi-test-model","choices":[]}`))
+	}))
+	defer upstream.Close()
+	db, err := storage.Open(filepath.Join(t.TempDir(), "virgil.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	cfg := config.Config{Providers: map[string]config.ProviderConfig{
+		"kimi": {Type: "kimi", BaseURL: upstream.URL + "/v1", Model: "kimi-test-model"},
+	}}
+	handler, err := NewServer(cfg, Dependencies{DB: db})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"kimi-test-model","messages":[{"role":"user","content":"synthetic"}]}`))
+	req.Header.Set("Authorization", "Bearer synthetic-key")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	select {
+	case got := <-seen:
+		if got.path != "/v1/chat/completions" || got.model != "kimi-test-model" {
+			t.Fatalf("path=%q model=%q", got.path, got.model)
+		}
+	default:
+		t.Fatal("provider was not called")
+	}
+}
+
+func TestAnthropicConfiguredRouteJSON(t *testing.T) {
+	type seenRequest struct{ path, key, model string }
+	seen := make(chan seenRequest, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		seen <- seenRequest{path: r.URL.Path, key: r.Header.Get("x-api-key"), model: request.Model}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_synthetic","model":"fixture-model","content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn","usage":{"input_tokens":2,"output_tokens":1}}`))
+	}))
+	defer upstream.Close()
+	db, err := storage.Open(filepath.Join(t.TempDir(), "virgil.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	cfg := config.Config{Providers: map[string]config.ProviderConfig{
+		"anthropic": {Type: "anthropic", BaseURL: upstream.URL + "/v1", Model: "fixture-model"},
+	}}
+	handler, err := NewServer(cfg, Dependencies{DB: db})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"fixture-model","messages":[{"role":"user","content":"synthetic"}],"max_tokens":64}`))
+	req.Header.Set("Authorization", "Bearer synthetic-key")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"object":"chat.completion"`) {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	select {
+	case got := <-seen:
+		if got.path != "/v1/messages" || got.key != "synthetic-key" || got.model != "fixture-model" {
+			t.Fatalf("request=%+v", got)
+		}
+	default:
+		t.Fatal("provider was not called")
 	}
 }

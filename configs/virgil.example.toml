@@ -31,3 +31,27 @@ estimated_output_tokens_per_call = 0
 
 [control_plane]
 enabled = false
+
+# Configure only providers you use. Model names and endpoints are local choices.
+# Omit capabilities to allow the adapter's supported subset; an explicit list
+# can disable streaming or tool use before any provider request is sent.
+# [providers.openai]
+# type = "openai"
+# base_url = "https://api.openai.com/v1"
+# api_key = "${OPENAI_API_KEY}"
+# model = "configured-model"
+# capabilities = ["stream", "tools"]
+
+# [providers.kimi]
+# type = "kimi"
+# base_url = "https://api.moonshot.ai/v1"
+# api_key = "${MOONSHOT_API_KEY}"
+# model = "configured-kimi-model"
+# capabilities = ["stream", "tools"]
+
+# [providers.anthropic]
+# type = "anthropic"
+# base_url = "https://api.anthropic.com/v1"
+# api_key = "${ANTHROPIC_API_KEY}"
+# model = "configured-claude-model"
+# capabilities = ["stream", "tools"]

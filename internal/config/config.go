@@ -57,11 +57,12 @@ type PrivacyConfig struct {
 }
 
 type ProviderConfig struct {
-	Type      string `toml:"type"`
-	BaseURL   string `toml:"base_url"`
-	Model     string `toml:"model"`
-	APIKey    string `toml:"api_key"`
-	APIKeyEnv string `toml:"-"`
+	Type         string   `toml:"type"`
+	BaseURL      string   `toml:"base_url"`
+	Model        string   `toml:"model"`
+	APIKey       string   `toml:"api_key"`
+	APIKeyEnv    string   `toml:"-"`
+	Capabilities []string `toml:"capabilities"`
 }
 
 var envReference = regexp.MustCompile(`^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$`)
@@ -121,6 +122,13 @@ func Load(path string, _ func(string) string) (Config, error) {
 		}
 	}
 	for name, provider := range cfg.Providers {
+		seenCapabilities := make(map[string]bool)
+		for _, capability := range provider.Capabilities {
+			if (capability != "stream" && capability != "tools") || seenCapabilities[capability] {
+				return Config{}, fmt.Errorf("provider %s has invalid capability", name)
+			}
+			seenCapabilities[capability] = true
+		}
 		if provider.APIKey != "" {
 			match := envReference.FindStringSubmatch(provider.APIKey)
 			if match == nil {

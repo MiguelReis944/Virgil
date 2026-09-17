@@ -123,3 +123,18 @@ func TestLoadRejectsInvalidGuardrails(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadProviderCapabilities(t *testing.T) {
+	path := writeConfig(t, "[providers.kimi]\ntype = \"kimi\"\nbase_url = \"https://example.invalid/v1\"\nmodel = \"kimi-model\"\ncapabilities = [\"stream\", \"tools\"]\n")
+	cfg, err := Load(path, os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Providers["kimi"].Capabilities) != 2 {
+		t.Fatalf("capabilities=%v", cfg.Providers["kimi"].Capabilities)
+	}
+	bad := writeConfig(t, "[providers.kimi]\ntype = \"kimi\"\nbase_url = \"https://example.invalid/v1\"\nmodel = \"kimi-model\"\ncapabilities = [\"unknown\"]\n")
+	if _, err := Load(bad, os.Getenv); err == nil {
+		t.Fatal("unsupported provider capability accepted")
+	}
+}

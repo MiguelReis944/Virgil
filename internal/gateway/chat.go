@@ -25,6 +25,7 @@ type route struct {
 	adapter  providers.Adapter
 	keyEnv   string
 	provider string
+	validate func(json.RawMessage) error
 }
 
 type router struct {
@@ -44,20 +45,16 @@ func newRouter(cfg config.Config, client *http.Client, getenv func(string) strin
 		getenv = func(string) string { return "" }
 	}
 	r := &router{models: make(map[string]route), getenv: getenv, guardrails: cfg.Guardrails}
-	for name, provider := range cfg.Providers {
-		if provider.Type != "openai-compatible" && provider.Type != "openai" {
-			return nil, errors.New("unsupported provider type")
-		}
-		if provider.Model == "" || provider.BaseURL == "" {
-			return nil, errors.New("provider model and base_url are required")
-		}
-		if _, exists := r.models[provider.Model]; exists {
-			return nil, errors.New("duplicate configured model")
-		}
-		r.models[provider.Model] = route{
-			adapter:  providers.NewOpenAICompatible(provider.BaseURL, client),
-			keyEnv:   provider.APIKeyEnv,
-			provider: name,
+	registry, err := providers.NewRegistry(cfg, client)
+	if err != nil {
+		return nil, err
+	}
+	for model, registration := range registry {
+		r.models[model] = route{
+			adapter:  registration.Adapter,
+			keyEnv:   registration.KeyEnv,
+			provider: registration.Provider,
+			validate: registration.Validate,
 		}
 	}
 	return r, nil
@@ -109,7 +106,7 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "model_not_configured")
 		return
 	}
-	if err := selected.adapter.Validate(body); err != nil {
+	if err := selected.validate(body); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "unsupported_request")
 		return
 	}

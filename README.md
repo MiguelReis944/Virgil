@@ -8,7 +8,7 @@ It runs next to your application, intercepts calls to providers such as OpenAI, 
 
 The Edge Gateway is designed to work without an account, without a mandatory cloud service, and without sending prompts or responses anywhere by default.
 
-> Status: early implementation. The local server, health endpoint, JSON/SSE Chat Completions proxy, canonical event schema, SQLite journal, metadata redaction, deterministic local policy engine, and in-memory repeated-error detection exist. Exporters and the Control Plane remain planned.
+> Status: early implementation. The local server, health endpoint, JSON/SSE Chat Completions proxy, configurable OpenAI/Kimi/Anthropic adapters, canonical event schema, SQLite journal, metadata redaction, deterministic local policy engine, and in-memory repeated-error detection exist. Exporters and the Control Plane remain planned.
 
 ## MVP milestones
 
@@ -27,6 +27,10 @@ go run ./cmd/virgil serve --config configs/virgil.example.toml
 `GET http://127.0.0.1:8787/health` returns JSON readiness including the SQLite connection state. The example binds loopback, creates a local database under `data/`, and does not require Docker, a provider credential, or a Control Plane.
 
 To use `POST /v1/chat/completions`, add a `[providers.<name>]` entry with `type = "openai-compatible"`, a provider `base_url` ending in `/v1`, and a configured `model`. The client sends its provider key as a bearer token. If the provider entry uses `api_key = "${PROVIDER_KEY}"`, set `VIRGIL_LOCAL_APP_TOKEN` in the gateway environment and send that separate token from the local client to unlock the configured key. An arbitrary bearer token is passed to the provider and never unlocks the configured key. The current proxy supports JSON text messages, tool calls, and SSE streaming. Unsupported fields return an error before provider dispatch.
+
+Provider `type` may also be `openai`, `kimi`, or `anthropic`. OpenAI, Kimi, and generic endpoints use the configured OpenAI-compatible protocol; Anthropic translates the supported text/tool subset to Messages. Set `capabilities = ["stream", "tools"]` to explicitly permit those features, or omit the setting to use the adapter's supported subset. An explicit empty list disables both. Provider URLs, models, and environment variable names are local configuration, not router constants.
+
+Anthropic requests in this subset must provide `max_tokens`; a missing limit is rejected before dispatch. Unsupported message content and tool features are also rejected locally.
 
 With `VIRGIL_LOCAL_APP_TOKEN` set, the application can report external tool outcomes through `POST /v1/tool-results` using the dedicated `X-Virgil-App-Token` header. The JSON body accepts only `run_id`, `tool_call_id`, `tool_name`, `status` (`success` or `error`), and a normalized `error_code` for errors. It rejects arguments, results, and free text. Three consecutive equivalent tool errors, provider errors, or identical provider tool calls within one run block the next gateway request before provider dispatch. These repetition sequences are bounded in memory and reset on gateway restart; call and budget counters in SQLite survive restart. The gateway can block only traffic routed through it and does not terminate an external agent process.
 
@@ -210,13 +214,13 @@ Provider API keys remain at the edge. The Control Plane does not need access to 
 
 ## Supported providers
 
-The first provider integrations are planned as follows:
+The current provider adapters are:
 
 | Provider | Integration |
 |---|---|
-| OpenAI | Native adapter and OpenAI-compatible HTTP |
-| Anthropic | Native adapter |
-| Kimi | OpenAI-compatible adapter |
+| OpenAI | Configured OpenAI-compatible HTTP |
+| Anthropic | Messages translation for text, tools, JSON, and SSE |
+| Kimi | Configured OpenAI-compatible HTTP |
 | Other providers | Configurable OpenAI-compatible endpoint |
 
 Kimi provides a chat completions endpoint at `https://api.moonshot.ai/v1/chat/completions` and documents support for streaming, tool calling, and usage information.
@@ -225,7 +229,7 @@ The Kimi adapter should use configuration rather than hardcoded model names:
 
 ```toml
 [providers.kimi]
-type = "openai-compatible"
+type = "kimi"
 base_url = "https://api.moonshot.ai/v1"
 api_key = "${MOONSHOT_API_KEY}"
 model = "kimi-model"
