@@ -62,13 +62,7 @@ func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
 }
 
 func ListenAndServe(ctx context.Context, address string, handler http.Handler) error {
-	srv := &http.Server{
-		Addr:              address,
-		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		MaxHeaderBytes:    1 << 16,
-	}
+	srv := newHTTPServer(address, handler)
 	errs := make(chan error, 1)
 	go func() {
 		errs <- srv.ListenAndServe()
@@ -82,5 +76,16 @@ func ListenAndServe(ctx context.Context, address string, handler http.Handler) e
 	case <-ctx.Done():
 		_ = srv.Shutdown(context.Background())
 		return nil
+	}
+}
+
+func newHTTPServer(address string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              address,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 16,
 	}
 }

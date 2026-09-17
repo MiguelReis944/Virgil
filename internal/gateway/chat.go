@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -75,7 +76,16 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 	req.Body = http.MaxBytesReader(w, req.Body, maxChatRequest)
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
-		writeAPIError(w, http.StatusRequestEntityTooLarge, "request_too_large")
+		var sizeErr *http.MaxBytesError
+		var netErr net.Error
+		switch {
+		case errors.As(err, &sizeErr):
+			writeAPIError(w, http.StatusRequestEntityTooLarge, "request_too_large")
+		case errors.As(err, &netErr) && netErr.Timeout():
+			writeAPIError(w, http.StatusRequestTimeout, "request_timeout")
+		default:
+			writeAPIError(w, http.StatusBadRequest, "invalid_request")
+		}
 		return
 	}
 	var selector struct {
