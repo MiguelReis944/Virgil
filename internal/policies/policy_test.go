@@ -120,3 +120,57 @@ func TestCostUnavailableAndGeneratedRunID(t *testing.T) {
 		t.Fatalf("got %+v", d)
 	}
 }
+
+func TestCallBudgetSurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policy.db")
+	open := func() (*Engine, func()) {
+		db, err := storage.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		journal, err := storage.NewJournal(db)
+		if err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+		engine, err := NewEngine(journal, Limits{MaxCallsPerRun: 1})
+		if err != nil {
+			journal.Close()
+			db.Close()
+			t.Fatal(err)
+		}
+		return engine, func() { journal.Close(); db.Close() }
+	}
+	engine, closeFirst := open()
+	first, err := engine.Preflight(context.Background(), RequestFacts{RunID: "run_restart", Provider: "p", Model: "m"})
+	if err != nil || first.Decision != "allow" {
+		t.Fatalf("first: %+v %v", first, err)
+	}
+	closeFirst()
+	engine, closeSecond := open()
+	defer closeSecond()
+	second, err := engine.Preflight(context.Background(), RequestFacts{RunID: "run_restart", Provider: "p", Model: "m"})
+	if err != nil || second.Decision != "block" || second.Reason != "call_limit" || second.Attempt != 2 {
+		t.Fatalf("after restart: %+v %v", second, err)
+	}
+}
+
+func TestUnknownOutcomeKeepsConservativeReservation(t *testing.T) {
+	engine := testEngine(t, Limits{MaxInputTokensPerRun: 4, MaxCostPerRunUSD: "0.50"})
+	estimate := int64(3)
+	first, err := engine.Preflight(context.Background(), RequestFacts{
+		RunID: "run_unknown", Provider: "p", Model: "m", EstimatedInputTokens: &estimate, EstimatedCostUSD: "0.40",
+	})
+	if err != nil || first.Decision != "allow" {
+		t.Fatalf("first: %+v %v", first, err)
+	}
+	if err := engine.Postflight(context.Background(), OutcomeFacts{RunID: first.RunID, ReservationID: first.ReservationID}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := engine.Preflight(context.Background(), RequestFacts{
+		RunID: "run_unknown", Provider: "p", Model: "m", EstimatedInputTokens: &estimate, EstimatedCostUSD: "0.20",
+	})
+	if err != nil || second.Decision != "block" || second.Reason != "input_token_limit" {
+		t.Fatalf("unknown outcome: %+v %v", second, err)
+	}
+}
