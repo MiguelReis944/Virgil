@@ -84,3 +84,42 @@ func TestLoadRejectsUnknownLogLevel(t *testing.T) {
 		t.Fatal("accepted unsupported log level")
 	}
 }
+
+func TestLoadGuardrails(t *testing.T) {
+	path := writeConfig(t, `[guardrails]
+max_requests_per_run = 2
+max_cost_per_run_usd = "1.25"
+max_input_tokens_per_run = 100
+max_output_tokens_per_run = 50
+max_total_tokens_per_run = 150
+max_duration_seconds = 60
+max_tool_calls_per_run = 3
+allowed_providers = ["fixture"]
+allowed_models = ["fixture-model"]
+allowed_tools = ["fixture_tool"]
+estimated_cost_per_call_usd = "0.10"
+estimated_input_tokens_per_call = 10
+estimated_output_tokens_per_call = 5
+`)
+	cfg, err := Load(path, os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Guardrails.MaxRequestsPerRun != 2 || cfg.Guardrails.MaxCostPerRunUSD != "1.25" || len(cfg.Guardrails.AllowedTools) != 1 {
+		t.Fatalf("guardrails not loaded: %+v", cfg.Guardrails)
+	}
+}
+
+func TestLoadRejectsInvalidGuardrails(t *testing.T) {
+	for _, body := range []string{
+		"[guardrails]\nmax_requests_per_run = -1\n",
+		"[guardrails]\nmax_cost_per_run_usd = \"bad\"\n",
+		"[guardrails]\nmax_duration_seconds = -1\n",
+		"[guardrails]\nallowed_models = [\"bad model\"]\n",
+		"[guardrails]\nestimated_cost_per_call_usd = \"-0.1\"\n",
+	} {
+		if _, err := Load(writeConfig(t, body), os.Getenv); err == nil {
+			t.Fatalf("accepted invalid guardrails: %q", body)
+		}
+	}
+}

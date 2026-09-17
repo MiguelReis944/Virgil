@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/MiguelReis944/Virgil/internal/config"
+	"github.com/MiguelReis944/Virgil/internal/policies"
 	"github.com/MiguelReis944/Virgil/internal/telemetry"
 )
 
@@ -23,17 +24,22 @@ type Dependencies struct {
 	Getenv         func(string) string
 	Recorder       EventRecorder
 	InstallationID string
+	Policy         *policies.Engine
 }
 
 func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
 	if deps.DB == nil {
 		return nil, errors.New("database connection is required")
 	}
+	if deps.Policy == nil && hasGuardrails(cfg.Guardrails) {
+		return nil, errors.New("configured guardrails require a policy engine")
+	}
 	router, err := newRouter(cfg, deps.Client, deps.Getenv)
 	if err != nil {
 		return nil, err
 	}
 	router.recorder = deps.Recorder
+	router.policy = deps.Policy
 	router.installationID = deps.InstallationID
 	if router.installationID == "" {
 		id, err := telemetry.NewID(16)
@@ -60,6 +66,12 @@ func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
 		_ = json.NewEncoder(w).Encode(body)
 	})
 	return mux, nil
+}
+
+func hasGuardrails(g config.GuardrailsConfig) bool {
+	return g.MaxRequestsPerRun != 0 || g.MaxCostPerRunUSD != "" || g.MaxInputTokensPerRun != 0 ||
+		g.MaxOutputTokensPerRun != 0 || g.MaxTotalTokensPerRun != 0 || g.MaxDurationSeconds != 0 ||
+		g.MaxToolCallsPerRun != 0 || len(g.AllowedProviders) != 0 || len(g.AllowedModels) != 0 || len(g.AllowedTools) != 0
 }
 
 func ListenAndServe(ctx context.Context, address string, handler http.Handler) error {

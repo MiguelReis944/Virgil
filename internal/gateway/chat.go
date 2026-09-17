@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/MiguelReis944/Virgil/internal/config"
+	"github.com/MiguelReis944/Virgil/internal/policies"
 	"github.com/MiguelReis944/Virgil/internal/providers"
 	"github.com/MiguelReis944/Virgil/internal/redaction"
 	"github.com/MiguelReis944/Virgil/internal/telemetry"
@@ -31,6 +32,8 @@ type router struct {
 	getenv         func(string) string
 	recorder       EventRecorder
 	installationID string
+	policy         *policies.Engine
+	guardrails     config.GuardrailsConfig
 }
 
 func newRouter(cfg config.Config, client *http.Client, getenv func(string) string) (*router, error) {
@@ -40,7 +43,7 @@ func newRouter(cfg config.Config, client *http.Client, getenv func(string) strin
 	if getenv == nil {
 		getenv = func(string) string { return "" }
 	}
-	r := &router{models: make(map[string]route), getenv: getenv}
+	r := &router{models: make(map[string]route), getenv: getenv, guardrails: cfg.Guardrails}
 	for name, provider := range cfg.Providers {
 		if provider.Type != "openai-compatible" && provider.Type != "openai" {
 			return nil, errors.New("unsupported provider type")
@@ -91,6 +94,11 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 	var selector struct {
 		Model  string `json:"model"`
 		Stream bool   `json:"stream"`
+		Tools  []struct {
+			Function struct {
+				Name string `json:"name"`
+			} `json:"function"`
+		} `json:"tools"`
 	}
 	if err := json.Unmarshal(body, &selector); err != nil || selector.Model == "" {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request")
@@ -125,10 +133,20 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "run_id_unavailable")
 		return
 	}
+	w.Header().Set("X-Virgil-Run-ID", runID)
 	upstreamReq.Header.Set("traceparent", "00-"+trace.TraceID+"-"+trace.SpanID+"-01")
 	started := time.Now()
 	result := providers.Result{Status: "transport_error", UsageSource: "unknown", ErrorCode: "provider_transport_error"}
+	var policyDecision *telemetry.PolicyDecision
+	var reservationID string
 	defer func() {
+		if router.policy != nil && reservationID != "" {
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 2*time.Second)
+			if err := router.policy.Postflight(ctx, policies.OutcomeFacts{RunID: runID, ReservationID: reservationID, InputTokens: result.InputTokens, OutputTokens: result.OutputTokens}); err != nil {
+				slog.Error("policy reconciliation failed", "code", "policy_postflight_failed")
+			}
+			cancel()
+		}
 		if router.recorder == nil {
 			return
 		}
@@ -146,6 +164,7 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 			UsageSource:    result.UsageSource,
 			Status:         result.Status,
 			ErrorCode:      result.ErrorCode,
+			PolicyDecision: policyDecision,
 			StartedAt:      started,
 			EndedAt:        time.Now(),
 		})
@@ -164,6 +183,38 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 			slog.Error("event record failed", "code", "journal_write_failed")
 		}
 	}()
+	if router.policy != nil {
+		toolNames := make([]string, 0, len(selector.Tools))
+		for _, tool := range selector.Tools {
+			toolNames = append(toolNames, tool.Function.Name)
+		}
+		var estimatedInput, estimatedOutput *int64
+		if router.guardrails.EstimatedInputTokensPerCall > 0 {
+			estimatedInput = &router.guardrails.EstimatedInputTokensPerCall
+		}
+		if router.guardrails.EstimatedOutputTokensPerCall > 0 {
+			estimatedOutput = &router.guardrails.EstimatedOutputTokensPerCall
+		}
+		decision, err := router.policy.Preflight(req.Context(), policies.RequestFacts{
+			RunID: runID, Provider: selected.provider, Model: selector.Model,
+			ToolNames: toolNames, StartedAt: started,
+			EstimatedCostUSD:     router.guardrails.EstimatedCostPerCallUSD,
+			EstimatedInputTokens: estimatedInput, EstimatedOutputTokens: estimatedOutput,
+		})
+		if err != nil {
+			result.ErrorCode = "policy_unavailable"
+			writeAPIError(w, http.StatusServiceUnavailable, "policy_unavailable")
+			return
+		}
+		if decision.Decision == "block" {
+			policyDecision = &telemetry.PolicyDecision{Decision: decision.Decision, Reason: decision.Reason, Policy: decision.Policy, Attempt: decision.Attempt, Threshold: decision.Threshold}
+			result.Status = "policy_block"
+			result.ErrorCode = decision.Reason
+			writePolicyBlock(w, decision)
+			return
+		}
+		reservationID = decision.ReservationID
+	}
 	resp, err := selected.adapter.Do(upstreamReq)
 	if err != nil {
 		if req.Context().Err() != nil {
@@ -192,6 +243,20 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 		result.UsageSource = "unknown"
 		writeAPIError(w, http.StatusBadGateway, "provider_response_error")
 	}
+}
+
+func writePolicyBlock(w http.ResponseWriter, decision policies.Decision) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": map[string]any{
+			"message": "Forbidden", "type": "policy_error", "code": decision.Reason,
+			"decision": map[string]any{
+				"decision": decision.Decision, "reason": decision.Reason, "policy": decision.Policy,
+				"attempt": decision.Attempt, "threshold": decision.Threshold,
+			},
+		},
+	})
 }
 
 func (router *router) resolveKey(header, providerKeyEnv string) (string, bool) {

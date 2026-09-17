@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://virgil.example/schemas/policy.v1.schema.json",
+  "title": "Virgil local policy v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "max_requests_per_run": {"type": "integer", "minimum": 0},
+    "max_cost_per_run_usd": {"$ref": "#/$defs/amount"},
+    "max_input_tokens_per_run": {"type": "integer", "minimum": 0},
+    "max_output_tokens_per_run": {"type": "integer", "minimum": 0},
+    "max_total_tokens_per_run": {"type": "integer", "minimum": 0},
+    "max_duration_seconds": {"type": "integer", "minimum": 0},
+    "max_tool_calls_per_run": {"type": "integer", "minimum": 0},
+    "allowed_providers": {"$ref": "#/$defs/labels"},
+    "allowed_models": {"$ref": "#/$defs/labels"},
+    "allowed_tools": {"$ref": "#/$defs/labels"},
+    "estimated_cost_per_call_usd": {"$ref": "#/$defs/amount"},
+    "estimated_input_tokens_per_call": {"type": "integer", "minimum": 0},
+    "estimated_output_tokens_per_call": {"type": "integer", "minimum": 0}
+  },
+  "$defs": {
+    "amount": {"type": "string", "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,9})?$"},
+    "labels": {"type": "array", "items": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$"}, "uniqueItems": true}
+  }
+}

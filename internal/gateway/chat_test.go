@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/MiguelReis944/Virgil/internal/config"
+	"github.com/MiguelReis944/Virgil/internal/policies"
 	"github.com/MiguelReis944/Virgil/internal/storage"
 )
 
@@ -22,6 +23,106 @@ func chatFixture(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+func TestPolicyBlockDoesNotCallProvider(t *testing.T) {
+	var calls atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl_fixture","object":"chat.completion","model":"fixture-model","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1}}`))
+	}))
+	defer upstream.Close()
+	db, err := storage.Open(filepath.Join(t.TempDir(), "virgil.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	journal, err := storage.NewJournal(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	engine, err := policies.NewEngine(journal, policies.Limits{MaxCallsPerRun: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Providers: map[string]config.ProviderConfig{
+		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model"},
+	}}
+	handler, err := NewServer(cfg, Dependencies{DB: db, Client: http.DefaultClient, Recorder: journal, InstallationID: journal.InstallationID(), Policy: engine})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var runID string
+	for i := range 2 {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(chatFixture(t)))
+		req.Header.Set("Authorization", "Bearer synthetic-key")
+		req.Header.Set("X-Virgil-Run-ID", "invalid run id")
+		if i == 1 {
+			req.Header.Set("X-Virgil-Run-ID", runID)
+		}
+		resp := httptest.NewRecorder()
+		handler.ServeHTTP(resp, req)
+		if i == 0 {
+			if resp.Code != 200 {
+				t.Fatalf("first status=%d: %s", resp.Code, resp.Body.String())
+			}
+			// The generated run ID is returned for subsequent calls.
+			runID = resp.Header().Get("X-Virgil-Run-ID")
+			if !strings.HasPrefix(runID, "run_") {
+				t.Fatalf("run ID=%q", runID)
+			}
+		} else {
+			if resp.Code != http.StatusForbidden || !strings.Contains(resp.Body.String(), `"decision":"block"`) || !strings.Contains(resp.Body.String(), `"reason":"call_limit"`) {
+				t.Fatalf("block status=%d body=%s", resp.Code, resp.Body.String())
+			}
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("provider calls=%d", calls.Load())
+	}
+}
+
+func TestCostUnavailableBlocksAndJournals(t *testing.T) {
+	var calls atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
+	defer upstream.Close()
+	db, err := storage.Open(filepath.Join(t.TempDir(), "virgil.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	journal, err := storage.NewJournal(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	engine, err := policies.NewEngine(journal, policies.Limits{MaxCostPerRunUSD: "1.00"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Providers: map[string]config.ProviderConfig{
+		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model"},
+	}}
+	handler, err := NewServer(cfg, Dependencies{DB: db, Recorder: journal, InstallationID: journal.InstallationID(), Policy: engine})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(chatFixture(t)))
+	req.Header.Set("Authorization", "Bearer synthetic-key")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	if resp.Code != http.StatusForbidden || !strings.Contains(resp.Body.String(), `"reason":"cost_unavailable"`) || calls.Load() != 0 {
+		t.Fatalf("status=%d body=%s calls=%d", resp.Code, resp.Body.String(), calls.Load())
+	}
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM events WHERE status='policy_block'").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("block events=%d", count)
+	}
 }
 
 func chatServer(t *testing.T, upstreamURL string, getenv func(string) string) http.Handler {

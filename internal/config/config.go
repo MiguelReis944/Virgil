@@ -15,7 +15,24 @@ type Config struct {
 	Storage      StorageConfig             `toml:"storage"`
 	ControlPlane ControlPlaneConfig        `toml:"control_plane"`
 	Privacy      PrivacyConfig             `toml:"privacy"`
+	Guardrails   GuardrailsConfig          `toml:"guardrails"`
 	Providers    map[string]ProviderConfig `toml:"providers"`
+}
+
+type GuardrailsConfig struct {
+	MaxRequestsPerRun            int64    `toml:"max_requests_per_run"`
+	MaxCostPerRunUSD             string   `toml:"max_cost_per_run_usd"`
+	MaxInputTokensPerRun         int64    `toml:"max_input_tokens_per_run"`
+	MaxOutputTokensPerRun        int64    `toml:"max_output_tokens_per_run"`
+	MaxTotalTokensPerRun         int64    `toml:"max_total_tokens_per_run"`
+	MaxDurationSeconds           int64    `toml:"max_duration_seconds"`
+	MaxToolCallsPerRun           int64    `toml:"max_tool_calls_per_run"`
+	AllowedProviders             []string `toml:"allowed_providers"`
+	AllowedModels                []string `toml:"allowed_models"`
+	AllowedTools                 []string `toml:"allowed_tools"`
+	EstimatedCostPerCallUSD      string   `toml:"estimated_cost_per_call_usd"`
+	EstimatedInputTokensPerCall  int64    `toml:"estimated_input_tokens_per_call"`
+	EstimatedOutputTokensPerCall int64    `toml:"estimated_output_tokens_per_call"`
 }
 
 type ServerConfig struct {
@@ -48,6 +65,8 @@ type ProviderConfig struct {
 }
 
 var envReference = regexp.MustCompile(`^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$`)
+var policyDecimal = regexp.MustCompile(`^(0|[1-9][0-9]*)(\.[0-9]{1,9})?$`)
+var policyLabel = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$`)
 
 func Load(path string, _ func(string) string) (Config, error) {
 	raw, err := os.ReadFile(path)
@@ -82,6 +101,24 @@ func Load(path string, _ func(string) string) (Config, error) {
 	}
 	if cfg.Storage.RetentionDays < 0 {
 		return Config{}, fmt.Errorf("retention_days cannot be negative")
+	}
+	g := cfg.Guardrails
+	for _, n := range []int64{g.MaxRequestsPerRun, g.MaxInputTokensPerRun, g.MaxOutputTokensPerRun, g.MaxTotalTokensPerRun, g.MaxDurationSeconds, g.MaxToolCallsPerRun, g.EstimatedInputTokensPerCall, g.EstimatedOutputTokensPerCall} {
+		if n < 0 {
+			return Config{}, fmt.Errorf("guardrail counts cannot be negative")
+		}
+	}
+	for _, amount := range []string{g.MaxCostPerRunUSD, g.EstimatedCostPerCallUSD} {
+		if amount != "" && !policyDecimal.MatchString(amount) {
+			return Config{}, fmt.Errorf("invalid guardrail cost")
+		}
+	}
+	for _, labels := range [][]string{g.AllowedProviders, g.AllowedModels, g.AllowedTools} {
+		for _, label := range labels {
+			if !policyLabel.MatchString(label) {
+				return Config{}, fmt.Errorf("invalid guardrail allowlist entry")
+			}
+		}
 	}
 	for name, provider := range cfg.Providers {
 		if provider.APIKey != "" {

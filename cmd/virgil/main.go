@@ -13,6 +13,7 @@ import (
 
 	"github.com/MiguelReis944/Virgil/internal/config"
 	"github.com/MiguelReis944/Virgil/internal/gateway"
+	"github.com/MiguelReis944/Virgil/internal/policies"
 	"github.com/MiguelReis944/Virgil/internal/storage"
 )
 
@@ -75,9 +76,25 @@ func buildHandler(cfg config.Config, db *sql.DB) (http.Handler, *storage.Journal
 	if err != nil {
 		return nil, nil, err
 	}
+	engine, err := policies.NewEngine(journal, policies.Limits{
+		MaxCallsPerRun:        cfg.Guardrails.MaxRequestsPerRun,
+		MaxCostPerRunUSD:      cfg.Guardrails.MaxCostPerRunUSD,
+		MaxInputTokensPerRun:  cfg.Guardrails.MaxInputTokensPerRun,
+		MaxOutputTokensPerRun: cfg.Guardrails.MaxOutputTokensPerRun,
+		MaxTotalTokensPerRun:  cfg.Guardrails.MaxTotalTokensPerRun,
+		MaxDurationSeconds:    cfg.Guardrails.MaxDurationSeconds,
+		MaxToolCallsPerRun:    cfg.Guardrails.MaxToolCallsPerRun,
+		AllowedProviders:      cfg.Guardrails.AllowedProviders,
+		AllowedModels:         cfg.Guardrails.AllowedModels,
+		AllowedTools:          cfg.Guardrails.AllowedTools,
+	})
+	if err != nil {
+		journal.Close()
+		return nil, nil, err
+	}
 	handler, err := gateway.NewServer(cfg, gateway.Dependencies{
 		DB: db, Getenv: os.Getenv,
-		Recorder: journal, InstallationID: journal.InstallationID(),
+		Recorder: journal, InstallationID: journal.InstallationID(), Policy: engine,
 	})
 	if err != nil {
 		journal.Close()
