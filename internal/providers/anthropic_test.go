@@ -146,7 +146,7 @@ func TestAnthropicDoesNotForwardKeyAcrossRedirect(t *testing.T) {
 	}))
 	defer source.Close()
 	a := NewAnthropic(source.URL+"/v1", nil)
-	req, err := a.Build(t.Context(), []byte(`{"model":"m","messages":[{"role":"user","content":"hello"}]}`), "synthetic-key")
+	req, err := a.Build(t.Context(), []byte(`{"model":"m","max_tokens":8,"messages":[{"role":"user","content":"hello"}]}`), "synthetic-key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestAnthropicDoHonorsCancellation(t *testing.T) {
 	defer server.Close()
 	a := NewAnthropic(server.URL+"/v1", nil)
 	ctx, cancel := context.WithCancel(t.Context())
-	req, err := a.Build(ctx, []byte(`{"model":"m","messages":[{"role":"user","content":"hello"}]}`), "synthetic-key")
+	req, err := a.Build(ctx, []byte(`{"model":"m","max_tokens":8,"messages":[{"role":"user","content":"hello"}]}`), "synthetic-key")
 	if err != nil {
 		t.Fatal(err)
 	}

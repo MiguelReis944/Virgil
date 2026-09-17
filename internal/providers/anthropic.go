@@ -57,13 +57,10 @@ func translateAnthropicRequest(body json.RawMessage) (anthropicRequest, error) {
 	if in.Model == "" || len(in.Messages) == 0 {
 		return anthropicRequest{}, errors.New("model and messages are required")
 	}
-	out := anthropicRequest{Model: in.Model, Stream: in.Stream, Temperature: in.Temperature, TopP: in.TopP, MaxTokens: 1024}
-	if in.MaxTokens != nil {
-		if *in.MaxTokens <= 0 {
-			return out, errors.New("max_tokens must be positive")
-		}
-		out.MaxTokens = *in.MaxTokens
+	if in.MaxTokens == nil || *in.MaxTokens <= 0 {
+		return anthropicRequest{}, errors.New("max_tokens is required and must be positive")
 	}
+	out := anthropicRequest{Model: in.Model, Stream: in.Stream, Temperature: in.Temperature, TopP: in.TopP, MaxTokens: *in.MaxTokens}
 	if len(in.StreamOptions) > 0 {
 		var opts struct {
 			IncludeUsage bool `json:"include_usage"`
@@ -156,6 +153,9 @@ func translateAnthropicRequest(body json.RawMessage) (anthropicRequest, error) {
 			return out, errors.New("unsupported message role")
 		}
 	}
+	if len(out.Messages) == 0 {
+		return out, errors.New("at least one non-system message is required")
+	}
 	if len(in.Tools) > 0 && string(in.Tools) != "null" {
 		var tools []struct {
 			Type     string `json:"type"`
@@ -163,6 +163,7 @@ func translateAnthropicRequest(body json.RawMessage) (anthropicRequest, error) {
 				Name        string          `json:"name"`
 				Description string          `json:"description"`
 				Parameters  json.RawMessage `json:"parameters"`
+				Strict      *bool           `json:"strict"`
 			} `json:"function"`
 		}
 		if json.Unmarshal(in.Tools, &tools) != nil {
@@ -171,6 +172,9 @@ func translateAnthropicRequest(body json.RawMessage) (anthropicRequest, error) {
 		for _, tool := range tools {
 			if tool.Type != "function" || tool.Function.Name == "" {
 				return out, errors.New("unsupported tool")
+			}
+			if tool.Function.Strict != nil && *tool.Function.Strict {
+				return out, errors.New("strict tool schemas are unsupported")
 			}
 			var schema any = map[string]any{"type": "object"}
 			if len(tool.Function.Parameters) > 0 && string(tool.Function.Parameters) != "null" {
@@ -237,6 +241,18 @@ func (a *Anthropic) Build(ctx context.Context, body json.RawMessage, key string)
 	base.Path = strings.TrimRight(base.Path, "/") + "/messages"
 	base.RawQuery = ""
 	base.Fragment = ""
+	// Detect include_usage before translation removes it.
+	var includeUsage bool
+	if len(body) > 0 {
+		var orig struct {
+			StreamOptions *struct {
+				IncludeUsage bool `json:"include_usage"`
+			} `json:"stream_options"`
+		}
+		if json.Unmarshal(body, &orig) == nil && orig.StreamOptions != nil {
+			includeUsage = orig.StreamOptions.IncludeUsage
+		}
+	}
 	raw, err := json.Marshal(translated)
 	if err != nil {
 		return nil, err
@@ -248,10 +264,24 @@ func (a *Anthropic) Build(ctx context.Context, body json.RawMessage, key string)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", key)
 	req.Header.Set("anthropic-version", anthropicVersion)
+	if includeUsage {
+		req.Header.Set("X-Virgil-Stream-Include-Usage", "true")
+	}
 	return req, nil
 }
 
-func (a *Anthropic) Do(req *http.Request) (*http.Response, error) { return a.client.Do(req) }
+func (a *Anthropic) Do(req *http.Request) (*http.Response, error) {
+	includeUsage := req.Header.Get("X-Virgil-Stream-Include-Usage") == "true"
+	req.Header.Del("X-Virgil-Stream-Include-Usage")
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if includeUsage {
+		resp.Header.Set("X-Virgil-Stream-Include-Usage", "true")
+	}
+	return resp, nil
+}
 
 type anthropicUsage struct {
 	InputTokens              *int64 `json:"input_tokens"`
@@ -354,7 +384,11 @@ func (a *Anthropic) Translate(resp *http.Response, downstream http.ResponseWrite
 	finish := anthropicFinish(msg.StopReason)
 	payload := map[string]any{"id": msg.ID, "object": "chat.completion", "model": msg.Model, "choices": []any{map[string]any{"index": 0, "message": message, "finish_reason": finish}}}
 	if msg.Usage != nil && result.InputTokens != nil && result.OutputTokens != nil {
-		usage := map[string]any{"prompt_tokens": *result.InputTokens, "completion_tokens": *result.OutputTokens, "total_tokens": *result.InputTokens + *result.OutputTokens}
+		if *result.OutputTokens > math.MaxInt64-*result.InputTokens {
+			return Result{}, errors.New("usage overflow")
+		}
+		total := *result.InputTokens + *result.OutputTokens
+		usage := map[string]any{"prompt_tokens": *result.InputTokens, "completion_tokens": *result.OutputTokens, "total_tokens": total}
 		if result.CachedTokens != nil {
 			usage["prompt_tokens_details"] = map[string]any{"cached_tokens": *result.CachedTokens}
 		}
@@ -418,6 +452,7 @@ func (a *Anthropic) Stream(ctx context.Context, resp *http.Response, downstream 
 		result.ErrorCode = code
 		streamError(downstream, code)
 	}()
+	includeUsage := resp.Header.Get("X-Virgil-Stream-Include-Usage") == "true"
 	reader := bufio.NewReader(resp.Body)
 	var frame []byte
 	id, model := "", ""
@@ -452,10 +487,11 @@ func (a *Anthropic) Stream(ctx context.Context, resp *http.Response, downstream 
 						Usage *anthropicUsage `json:"usage"`
 					} `json:"message"`
 					ContentBlock struct {
-						Type string `json:"type"`
-						ID   string `json:"id"`
-						Name string `json:"name"`
-						Text string `json:"text"`
+						Type  string          `json:"type"`
+						ID    string          `json:"id"`
+						Name  string          `json:"name"`
+						Text  string          `json:"text"`
+						Input json.RawMessage `json:"input"`
 					} `json:"content_block"`
 					Delta struct {
 						Type        string `json:"type"`
@@ -485,8 +521,12 @@ func (a *Anthropic) Stream(ctx context.Context, resp *http.Response, downstream 
 					if event.ContentBlock.Type == "tool_use" {
 						idx := len(toolIndices)
 						toolIndices[event.Index] = idx
-						delta = map[string]any{"tool_calls": []any{map[string]any{"index": idx, "id": event.ContentBlock.ID, "type": "function", "function": map[string]any{"name": event.ContentBlock.Name, "arguments": ""}}}}
-						if err := result.addToolDelta(0, idx, event.ContentBlock.Name, ""); err != nil {
+						initialArgs := ""
+						if len(event.ContentBlock.Input) > 0 && string(event.ContentBlock.Input) != "null" {
+							initialArgs = string(event.ContentBlock.Input)
+						}
+						delta = map[string]any{"tool_calls": []any{map[string]any{"index": idx, "id": event.ContentBlock.ID, "type": "function", "function": map[string]any{"name": event.ContentBlock.Name, "arguments": initialArgs}}}}
+						if err := result.addToolDelta(0, idx, event.ContentBlock.Name, initialArgs); err != nil {
 							return result, err
 						}
 					} else if event.ContentBlock.Type == "text" && event.ContentBlock.Text != "" {
@@ -513,16 +553,31 @@ func (a *Anthropic) Stream(ctx context.Context, resp *http.Response, downstream 
 					if err := applyAnthropicUsage(&result, event.Usage); err != nil {
 						return result, err
 					}
-					finish = anthropicFinish(event.Delta.StopReason)
-					delta = map[string]any{}
 					if result.InputTokens != nil && result.OutputTokens != nil {
-						usage = map[string]any{"prompt_tokens": *result.InputTokens, "completion_tokens": *result.OutputTokens, "total_tokens": *result.InputTokens + *result.OutputTokens}
-						if result.CachedTokens != nil {
-							usage.(map[string]any)["prompt_tokens_details"] = map[string]any{"cached_tokens": *result.CachedTokens}
+						if *result.OutputTokens > math.MaxInt64-*result.InputTokens {
+							result.Status = "provider_error"
+							return result, errors.New("usage overflow")
 						}
 					}
+					finish = anthropicFinish(event.Delta.StopReason)
+					delta = map[string]any{}
 				case "message_stop":
 					result.finishToolDeltas()
+					if includeUsage && result.InputTokens != nil && result.OutputTokens != nil {
+						total := *result.InputTokens + *result.OutputTokens
+						usageChunk := map[string]any{"prompt_tokens": *result.InputTokens, "completion_tokens": *result.OutputTokens, "total_tokens": total}
+						if result.CachedTokens != nil {
+							usageChunk["prompt_tokens_details"] = map[string]any{"cached_tokens": *result.CachedTokens}
+						}
+						raw, _ := json.Marshal(map[string]any{"id": id, "object": "chat.completion.chunk", "model": model, "choices": []any{}, "usage": usageChunk})
+						if _, err := fmt.Fprintf(downstream, "data: %s\n\n", raw); err != nil {
+							result.Status = "client_cancelled"
+							return result, err
+						}
+						if f, ok := downstream.(http.Flusher); ok {
+							f.Flush()
+						}
+					}
 					if _, err := io.WriteString(downstream, "data: [DONE]\n\n"); err != nil {
 						result.Status = "client_cancelled"
 						return result, err
