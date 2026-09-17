@@ -169,6 +169,64 @@ func Build(a Attempt) (Event, error) {
 	}, nil
 }
 
+func ValidateEvent(event Event) error {
+	if event.SchemaVersion != SchemaVersion || event.ContentCapture ||
+		!validHexID(event.EventID, 32) || event.CreatedAt.IsZero() ||
+		!labelPattern.MatchString(event.InstallationID) || !labelPattern.MatchString(event.RunID) ||
+		!validHexID(event.TraceID, 32) || !validHexID(event.SpanID, 16) ||
+		!labelPattern.MatchString(event.Provider) || !modelPattern.MatchString(event.RequestedModel) ||
+		(event.ResponseModel != "" && !modelPattern.MatchString(event.ResponseModel)) ||
+		!validOptionalLabel(event.OrganizationID) || !validOptionalLabel(event.ProjectID) ||
+		!validOptionalLabel(event.Environment) || !validOptionalLabel(event.AgentID) ||
+		(event.ToolName != "" && !modelPattern.MatchString(event.ToolName)) ||
+		!validOptionalLabel(event.PricingVersion) ||
+		(event.CostCurrency != "" && !currencyPattern.MatchString(event.CostCurrency)) ||
+		(event.ErrorCode != "" && !errorCodePattern.MatchString(event.ErrorCode)) ||
+		event.LatencyMS < 0 || !validCount(event.InputTokens) ||
+		!validCount(event.OutputTokens) || !validCount(event.CachedTokens) {
+		return errors.New("invalid canonical event metadata")
+	}
+	if event.CachedTokens != nil && (event.InputTokens == nil || *event.CachedTokens > *event.InputTokens) {
+		return errors.New("invalid cached token count")
+	}
+	switch event.Status {
+	case "success", "provider_error", "transport_error", "policy_block", "client_cancelled":
+	default:
+		return errors.New("invalid event status")
+	}
+	switch event.UsageSource {
+	case "provider", "estimated":
+		if event.InputTokens == nil && event.OutputTokens == nil {
+			return errors.New("usage source has no counts")
+		}
+	case "unknown":
+		if event.InputTokens != nil || event.OutputTokens != nil || event.CachedTokens != nil {
+			return errors.New("unknown usage has counts")
+		}
+	default:
+		return errors.New("invalid usage source")
+	}
+	if event.ActualCost != nil && event.EstimatedCost != nil {
+		return errors.New("cost fields are exclusive")
+	}
+	if event.ActualCost != nil && (event.UsageSource != "provider" || !decimalPattern.MatchString(*event.ActualCost)) {
+		return errors.New("invalid actual cost")
+	}
+	if event.EstimatedCost != nil && (event.UsageSource != "estimated" || !decimalPattern.MatchString(*event.EstimatedCost)) {
+		return errors.New("invalid estimated cost")
+	}
+	if event.PolicyDecision != nil {
+		p := event.PolicyDecision
+		if (p.Decision != "allow" && p.Decision != "block") ||
+			!errorCodePattern.MatchString(p.Reason) ||
+			!errorCodePattern.MatchString(p.Policy) ||
+			p.Attempt < 0 || p.Threshold < 0 {
+			return errors.New("invalid policy decision")
+		}
+	}
+	return nil
+}
+
 func DecodeEvent(reader io.Reader) (Event, error) {
 	decoder := json.NewDecoder(reader)
 	decoder.DisallowUnknownFields()
@@ -180,8 +238,8 @@ func DecodeEvent(reader io.Reader) (Event, error) {
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return Event{}, errors.New("extra JSON value")
 	}
-	if event.ContentCapture {
-		return Event{}, errors.New("content capture is unsupported")
+	if err := ValidateEvent(event); err != nil {
+		return Event{}, err
 	}
 	return event, nil
 }

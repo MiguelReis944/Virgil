@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/MiguelReis944/Virgil/internal/telemetry"
+	"github.com/MiguelReis944/Virgil/internal/redaction"
 )
 
 //go:embed migrations/*.sql
@@ -164,7 +165,11 @@ func (j *Journal) appendTransaction(event telemetry.Event, destinations []string
 	if event.ContentCapture || event.InstallationID != j.installationID || event.EventID == "" {
 		return errors.New("invalid event for journal")
 	}
-	encoded, err := json.Marshal(event)
+	prepared, err := redaction.Prepare(event)
+	if err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(prepared)
 	if err != nil {
 		return err
 	}

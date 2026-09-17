@@ -13,6 +13,7 @@ import (
 
 	"github.com/MiguelReis944/Virgil/internal/config"
 	"github.com/MiguelReis944/Virgil/internal/providers"
+	"github.com/MiguelReis944/Virgil/internal/redaction"
 	"github.com/MiguelReis944/Virgil/internal/telemetry"
 )
 
@@ -140,6 +141,11 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 		})
 		if err != nil {
 			slog.Error("event rejected", "code", "event_build_failed")
+			return
+		}
+		event, err = redaction.Prepare(event)
+		if err != nil {
+			slog.Error("event rejected", "code", "event_redaction_failed")
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 2*time.Second)

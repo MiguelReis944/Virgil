@@ -133,3 +133,21 @@ func TestConcurrentAppendPersistsEveryEvent(t *testing.T) {
 		t.Fatalf("events=%d, want %d", got, count)
 	}
 }
+
+func TestAppendRejectsUnsafeMetadataBeforeSQLite(t *testing.T) {
+	db, journal := openJournal(t, filepath.Join(t.TempDir(), "virgil.db"))
+	defer journal.Close()
+	defer db.Close()
+	event := testEvent(t, journal.InstallationID(), time.Now())
+	event.ResponseModel = "private canary in model"
+	if err := journal.Append(context.Background(), event, nil); err == nil {
+		t.Fatal("persisted unsafe metadata")
+	}
+	var count int
+	if err := db.QueryRow("SELECT count(*) FROM events").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("unsafe events persisted=%d", count)
+	}
+}

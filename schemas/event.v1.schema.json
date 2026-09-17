@@ -40,8 +40,8 @@
       "required": ["decision", "reason", "policy", "attempt", "threshold"],
       "properties": {
         "decision": {"enum": ["allow", "block"]},
-        "reason": {"type": "string", "maxLength": 64},
-        "policy": {"type": "string", "maxLength": 64},
+        "reason": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"},
+        "policy": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"},
         "attempt": {"type": "integer", "minimum": 0},
         "threshold": {"type": "integer", "minimum": 0}
       }
