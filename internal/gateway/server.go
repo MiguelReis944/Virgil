@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"time"
 
@@ -62,10 +63,19 @@ func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
 }
 
 func ListenAndServe(ctx context.Context, address string, handler http.Handler) error {
-	srv := newHTTPServer(address, handler)
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return err
+	}
+	return serve(ctx, listener, handler)
+}
+
+func serve(ctx context.Context, listener net.Listener, handler http.Handler) error {
+	srv := newHTTPServer(listener.Addr().String(), handler)
+	srv.BaseContext = func(net.Listener) context.Context { return ctx }
 	errs := make(chan error, 1)
 	go func() {
-		errs <- srv.ListenAndServe()
+		errs <- srv.Serve(listener)
 	}()
 	select {
 	case err := <-errs:
@@ -74,8 +84,17 @@ func ListenAndServe(ctx context.Context, address string, handler http.Handler) e
 		}
 		return err
 	case <-ctx.Done():
-		_ = srv.Shutdown(context.Background())
-		return nil
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		shutdownErr := srv.Shutdown(shutdownCtx)
+		if shutdownErr != nil {
+			_ = srv.Close()
+		}
+		serveErr := <-errs
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			return serveErr
+		}
+		return shutdownErr
 	}
 }
 

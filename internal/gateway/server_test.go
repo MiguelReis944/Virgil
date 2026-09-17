@@ -3,7 +3,9 @@ package gateway
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -96,6 +98,195 @@ func TestConfiguredServerForwardsNormalChatJSON(t *testing.T) {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", response.StatusCode)
+	}
+}
+
+func TestShutdownWithoutActiveConnections(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() {
+		finished <- serve(ctx, listener, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	}()
+	cancel()
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not stop without active connections")
+	}
+	if conn, err := net.DialTimeout("tcp", listener.Addr().String(), 100*time.Millisecond); err == nil {
+		conn.Close()
+		t.Fatal("listener remains open after server goroutine exits")
+	}
+}
+
+func TestShutdownCancelsActiveRequestAndJoinsServer(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	requestCancelled := make(chan struct{})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+		close(requestCancelled)
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() { finished <- serve(ctx, listener, handler) }()
+	clientFinished := make(chan struct{})
+	go func() {
+		defer close(clientFinished)
+		response, err := http.Get("http://" + listener.Addr().String())
+		if err == nil {
+			response.Body.Close()
+		}
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("request did not start")
+	}
+	cancel()
+	select {
+	case <-requestCancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("active request context was not cancelled")
+	}
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server goroutine did not terminate")
+	}
+	select {
+	case <-clientFinished:
+	case <-time.After(2 * time.Second):
+		t.Fatal("client request did not terminate")
+	}
+}
+
+func TestShutdownCancelsUpstreamStream(t *testing.T) {
+	upstreamCancelled := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"model\":\"fixture-model\",\"choices\":[]}\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+		close(upstreamCancelled)
+	}))
+	defer upstream.Close()
+	handler := chatServer(t, upstream.URL, func(string) string { return "" })
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() { finished <- serve(ctx, listener, handler) }()
+	req, err := http.NewRequest(http.MethodPost, "http://"+listener.Addr().String()+"/v1/chat/completions", strings.NewReader(`{"model":"fixture-model","messages":[{"role":"user","content":"synthetic"}],"stream":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer synthetic-key")
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if _, err := bufio.NewReader(response.Body).ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case <-upstreamCancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("upstream stream continued after shutdown")
+	}
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not finish after stream cancellation")
+	}
+}
+
+func TestShutdownReturnsAtDeadlineForStuckHandler(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	released := false
+	defer func() {
+		if !released {
+			close(release)
+		}
+	}()
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-release
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() { finished <- serve(ctx, listener, handler) }()
+	clientFinished := make(chan struct{})
+	go func() {
+		defer close(clientFinished)
+		response, err := http.Get("http://" + listener.Addr().String())
+		if err == nil {
+			response.Body.Close()
+		}
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("request did not start")
+	}
+	cancel()
+	select {
+	case err := <-finished:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("shutdown error = %v, want deadline exceeded", err)
+		}
+	case <-time.After(7 * time.Second):
+		t.Fatal("shutdown exceeded its deadline")
+	}
+	close(release)
+	released = true
+	select {
+	case <-clientFinished:
+	case <-time.After(2 * time.Second):
+		t.Fatal("client request did not terminate")
+	}
+}
+
+func TestListenAndServeReturnsImmediateListenError(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := ListenAndServe(ctx, listener.Addr().String(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})); err == nil {
+		t.Fatal("expected listen error for occupied address")
 	}
 }
 
