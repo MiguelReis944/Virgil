@@ -10,6 +10,10 @@
 
 **Spec:** [Virgil architecture](../../design/2026-09-16-virgil-architecture.md).
 
+## Quality hardening checkpoint (2026-09-17)
+
+The implemented Edge Gateway now bounds complete HTTP request reads to fifteen seconds while retaining the 1 MiB chat body limit. Slow bodies return a generic 408, and SSE still flushes incrementally without a global write deadline. Process cancellation propagates to active requests and upstream streams; graceful shutdown has a five-second deadline and closes remaining connections on expiry. Regression tests cover these behaviors, including a stalled handler and an immediate listener error. See [quality review](../../quality/2026-09-16-quality-review.md) for the actual validation results and remaining tool limitations. Tasks 7 onward remain planned.
+
 ## Global constraints
 
 - Preserve the MIT license and keep all examples and test payloads synthetic.

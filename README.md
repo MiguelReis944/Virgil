@@ -22,6 +22,8 @@ go run ./cmd/virgil serve --config configs/virgil.example.toml
 
 To use `POST /v1/chat/completions`, add a `[providers.<name>]` entry with `type = "openai-compatible"`, a provider `base_url` ending in `/v1`, and a configured `model`. The client sends its provider key as a bearer token. If the provider entry uses `api_key = "${PROVIDER_KEY}"`, set `VIRGIL_LOCAL_APP_TOKEN` in the gateway environment and send that separate token from the local client to unlock the configured key. An arbitrary bearer token is passed to the provider and never unlocks the configured key. The current proxy supports JSON text messages, tool calls, and SSE streaming. Unsupported fields return an error before provider dispatch.
 
+The local HTTP server gives request headers five seconds and the entire request read fifteen seconds. Chat request bodies are limited to 1 MiB; a body that stalls returns a generic 408 response and one above the limit returns 413. The server does not set a global write deadline because it streams SSE frames. On process interruption, active request contexts and upstream streams are cancelled; graceful shutdown waits up to five seconds before closing remaining connections. A configured provider `base_url` is trusted local configuration and receives the provider bearer token, so use only endpoints you trust.
+
 ---
 
 ## Why Virgil exists
