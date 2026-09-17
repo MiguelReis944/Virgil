@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/MiguelReis944/Virgil/internal/config"
+	"github.com/MiguelReis944/Virgil/internal/export"
 	"github.com/MiguelReis944/Virgil/internal/gateway"
 	"github.com/MiguelReis944/Virgil/internal/policies"
 	"github.com/MiguelReis944/Virgil/internal/storage"
@@ -25,8 +26,15 @@ func main() {
 }
 
 func run(args []string) error {
-	if len(args) == 0 || args[0] != "serve" {
-		return fmt.Errorf("usage: virgil serve --config <path>")
+	if len(args) == 0 {
+		return fmt.Errorf("usage: virgil <serve|events> ...")
+	}
+	switch args[0] {
+	case "events":
+		return runEvents(args[1:])
+	case "serve":
+	default:
+		return fmt.Errorf("unknown command: %s", args[0])
 	}
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	configPath := flags.String("config", "", "path to local TOML configuration")
@@ -69,6 +77,67 @@ func run(args []string) error {
 	defer stop()
 	slog.Info("gateway listening", "address", cfg.Server.Listen)
 	return gateway.ListenAndServe(ctx, cfg.Server.Listen, handler)
+}
+
+func runEvents(args []string) error {
+	if len(args) == 0 || args[0] != "export" {
+		return fmt.Errorf("usage: virgil events export --config <path> --format jsonl --output <path> --fields <f1,f2,...>")
+	}
+	flags := flag.NewFlagSet("events export", flag.ContinueOnError)
+	configPath := flags.String("config", "", "path to local TOML configuration")
+	format := flags.String("format", "", "export format (jsonl)")
+	output := flags.String("output", "", "output file path")
+	fields := flags.String("fields", "", "comma-separated list of allowed fields")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if *configPath == "" {
+		return fmt.Errorf("--config is required")
+	}
+	if *format != "jsonl" {
+		return fmt.Errorf("--format must be jsonl")
+	}
+	if *output == "" {
+		return fmt.Errorf("--output is required")
+	}
+	var allowed []string
+	if *fields != "" {
+		for _, f := range splitFields(*fields) {
+			if f != "" {
+				allowed = append(allowed, f)
+			}
+		}
+	}
+	if len(allowed) == 0 {
+		return fmt.Errorf("--fields is required")
+	}
+	cfg, err := config.Load(*configPath, os.Getenv)
+	if err != nil {
+		return err
+	}
+	db, err := storage.Open(cfg.Storage.Path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	journal, err := storage.NewJournal(db)
+	if err != nil {
+		return err
+	}
+	defer journal.Close()
+	return export.JSONL(context.Background(), journal, *output, allowed)
+}
+
+func splitFields(s string) []string {
+	var out []string
+	start := 0
+	for i := 0; i <= len(s); i++ {
+		if i == len(s) || s[i] == ',' {
+			out = append(out, s[start:i])
+			start = i + 1
+		}
+	}
+	return out
 }
 
 func buildHandler(cfg config.Config, db *sql.DB) (http.Handler, *storage.Journal, error) {
