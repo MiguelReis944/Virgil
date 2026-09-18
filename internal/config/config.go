@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"regexp"
 
+	"github.com/MiguelReis944/Virgil/internal/redaction"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -59,9 +61,10 @@ type StorageConfig struct {
 }
 
 type ControlPlaneConfig struct {
-	Enabled        bool   `toml:"enabled"`
-	Endpoint       string `toml:"endpoint"`
-	CredentialPath string `toml:"credential_path"` // local file holding the scoped credential; gitignored
+	Enabled        bool     `toml:"enabled"`
+	Endpoint       string   `toml:"endpoint"`
+	CredentialPath string   `toml:"credential_path"` // local file holding the scoped credential; gitignored
+	AllowedFields  []string `toml:"allowed_fields"`
 }
 
 type PrivacyConfig struct {
@@ -116,6 +119,21 @@ func Load(path string, _ func(string) string) (Config, error) {
 	}
 	if cfg.Storage.RetentionDays < 0 {
 		return Config{}, fmt.Errorf("retention_days cannot be negative")
+	}
+	if cfg.ControlPlane.Enabled {
+		if cfg.ControlPlane.CredentialPath == "" || redaction.ValidateFields(cfg.ControlPlane.AllowedFields) != nil {
+			return Config{}, fmt.Errorf("control plane requires credential_path and safe allowed_fields")
+		}
+		u, err := url.Parse(cfg.ControlPlane.Endpoint)
+		if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "https" && u.Scheme != "http") {
+			return Config{}, fmt.Errorf("invalid control plane endpoint")
+		}
+		if u.Scheme == "http" {
+			ip := net.ParseIP(u.Hostname())
+			if ip == nil || !ip.IsLoopback() {
+				return Config{}, fmt.Errorf("control plane HTTP endpoint must be loopback")
+			}
+		}
 	}
 	g := cfg.Guardrails
 	for _, n := range []int64{g.MaxRequestsPerRun, g.MaxInputTokensPerRun, g.MaxOutputTokensPerRun, g.MaxTotalTokensPerRun, g.MaxDurationSeconds, g.MaxToolCallsPerRun, g.EstimatedInputTokensPerCall, g.EstimatedOutputTokensPerCall} {

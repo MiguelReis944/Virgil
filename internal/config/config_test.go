@@ -138,3 +138,20 @@ func TestLoadProviderCapabilities(t *testing.T) {
 		t.Fatal("unsupported provider capability accepted")
 	}
 }
+
+func TestControlPlaneRequiresExplicitSafeExportConfig(t *testing.T) {
+	for _, body := range []string{
+		"[control_plane]\nenabled = true\n",
+		"[control_plane]\nenabled = true\nendpoint = \"http://example.com\"\ncredential_path = \"cred\"\nallowed_fields = [\"provider\"]\n",
+		"[control_plane]\nenabled = true\nendpoint = \"https://example.com\"\ncredential_path = \"cred\"\nallowed_fields = [\"prompt\"]\n",
+	} {
+		if _, err := Load(writeConfig(t, body), os.Getenv); err == nil {
+			t.Fatalf("accepted unsafe control plane config: %q", body)
+		}
+	}
+	body := "[control_plane]\nenabled = true\nendpoint = \"https://example.com\"\ncredential_path = \"cred\"\nallowed_fields = [\"event_id\", \"provider\"]\n"
+	cfg, err := Load(writeConfig(t, body), os.Getenv)
+	if err != nil || len(cfg.ControlPlane.AllowedFields) != 2 {
+		t.Fatalf("config=%+v err=%v", cfg.ControlPlane, err)
+	}
+}

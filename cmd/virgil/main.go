@@ -16,6 +16,7 @@ import (
 	"github.com/MiguelReis944/Virgil/internal/gateway"
 	"github.com/MiguelReis944/Virgil/internal/policies"
 	"github.com/MiguelReis944/Virgil/internal/storage"
+	"github.com/MiguelReis944/Virgil/internal/telemetry"
 )
 
 func main() {
@@ -77,6 +78,18 @@ func run(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	if cfg.ControlPlane.Enabled {
+		client, err := configuredControlPlaneClient(cfg.ControlPlane)
+		if err != nil {
+			return fmt.Errorf("control plane credential: %w", err)
+		}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			runControlPlaneDelivery(ctx, journal, client, cfg.ControlPlane.AllowedFields)
+		}()
+		defer func() { stop(); <-done }()
+	}
 	slog.Info("gateway listening", "address", cfg.Server.Listen)
 	return gateway.ListenAndServe(ctx, cfg.Server.Listen, handler)
 }
@@ -163,13 +176,26 @@ func buildHandler(cfg config.Config, db *sql.DB) (http.Handler, *storage.Journal
 		journal.Close()
 		return nil, nil, err
 	}
+	var recorder gateway.EventRecorder = journal
+	if cfg.ControlPlane.Enabled {
+		recorder = destinationRecorder{journal: journal, destination: "controlplane"}
+	}
 	handler, err := gateway.NewServer(cfg, gateway.Dependencies{
 		DB: db, Getenv: os.Getenv,
-		Recorder: journal, InstallationID: journal.InstallationID(), Policy: engine,
+		Recorder: recorder, InstallationID: journal.InstallationID(), Policy: engine,
 	})
 	if err != nil {
 		journal.Close()
 		return nil, nil, err
 	}
 	return handler, journal, nil
+}
+
+type destinationRecorder struct {
+	journal     *storage.Journal
+	destination string
+}
+
+func (r destinationRecorder) Record(ctx context.Context, event telemetry.Event) error {
+	return r.journal.Append(ctx, event, []string{r.destination})
 }

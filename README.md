@@ -8,7 +8,7 @@ It runs next to your application, intercepts calls to providers such as OpenAI, 
 
 The Edge Gateway is designed to work without an account, without a mandatory cloud service, and without sending prompts or responses anywhere by default.
 
-> Status: early implementation. The local server, health endpoint, JSON/SSE Chat Completions proxy, configurable OpenAI/Kimi/Anthropic adapters, canonical event schema, SQLite journal, metadata redaction, deterministic local policy engine, and in-memory repeated-error detection exist. Exporters and the Control Plane remain planned.
+> Status: early implementation. The local server, JSON/SSE proxy, provider adapters, SQLite journal, metadata redaction, local policies, repeated-error detection, JSONL export, and optional Control Plane event delivery exist. Remote policy fetching and an end-to-end PostgreSQL deployment are not yet verified.
 
 ## MVP milestones
 
@@ -25,6 +25,15 @@ go run ./cmd/virgil serve --config configs/virgil.example.toml
 ```
 
 `GET http://127.0.0.1:8787/health` returns JSON readiness including the SQLite connection state. The example binds loopback, creates a local database under `data/`, and does not require Docker, a provider credential, or a Control Plane.
+
+Control Plane delivery is opt-in. Set `[control_plane]` `enabled`, `endpoint`,
+`credential_path`, and `allowed_fields` as shown in the example TOML. Store the
+scoped credential returned by enrollment in a gitignored file under `data/`.
+HTTP is permitted only for a loopback IP; use HTTPS for other destinations.
+The gateway queues selected event metadata in SQLite, retries delivery in the
+background, and continues local proxying while the service is unavailable.
+An enabled Control Plane with a missing credential file prevents startup so
+telemetry is not silently queued without a usable identity.
 
 To use `POST /v1/chat/completions`, add a `[providers.<name>]` entry with `type = "openai-compatible"`, a provider `base_url` ending in `/v1`, and a configured `model`. The client sends its provider key as a bearer token. If the provider entry uses `api_key = "${PROVIDER_KEY}"`, set `VIRGIL_LOCAL_APP_TOKEN` in the gateway environment and send that separate token from the local client to unlock the configured key. An arbitrary bearer token is passed to the provider and never unlocks the configured key. The current proxy supports JSON text messages, tool calls, and SSE streaming. Unsupported fields return an error before provider dispatch.
 

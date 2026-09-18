@@ -83,6 +83,24 @@ func TestCredentialNeverInEvent(t *testing.T) {
 	}
 }
 
+func TestBatchDoesNotFollowRedirectWithCredential(t *testing.T) {
+	forwarded := false
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer destination.Close()
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, destination.URL, http.StatusTemporaryRedirect)
+	}))
+	defer redirect.Close()
+	client := NewClient(redirect.URL, "synthetic-credential", nil)
+	if _, err := client.SendBatch(context.Background(), makeDeliveries(t, 1), []string{"provider"}); err == nil {
+		t.Fatal("redirect accepted")
+	}
+	if forwarded { t.Fatal("credential request followed redirect") }
+}
+
 func TestRevokedCredentialStopsRemoteOnly(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

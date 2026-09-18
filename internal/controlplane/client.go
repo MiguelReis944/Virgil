@@ -50,7 +50,7 @@ type Client struct {
 // NewClient creates a new Client. credential may be empty before Enroll.
 func NewClient(endpoint, credential string, httpClient *http.Client) *Client {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
+		httpClient = &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
 	return &Client{endpoint: endpoint, credential: credential, httpClient: httpClient}
 }

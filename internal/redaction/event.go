@@ -28,17 +28,12 @@ func Prepare(event telemetry.Event) (telemetry.Event, error) {
 }
 
 func ForExport(event telemetry.Event, allowed []string) (map[string]any, error) {
-	if len(allowed) == 0 {
-		return nil, errors.New("export field allowlist is required")
+	if err := ValidateFields(allowed); err != nil {
+		return nil, err
 	}
 	prepared, err := Prepare(event)
 	if err != nil {
 		return nil, err
-	}
-	for _, field := range allowed {
-		if !exportableFields[field] {
-			return nil, errors.New("unsupported export field")
-		}
 	}
 	encoded, err := json.Marshal(prepared)
 	if err != nil {
@@ -55,4 +50,16 @@ func ForExport(event telemetry.Event, allowed []string) (map[string]any, error) 
 		}
 	}
 	return selected, nil
+}
+
+func ValidateFields(allowed []string) error {
+	if len(allowed) == 0 {
+		return errors.New("export field allowlist is required")
+	}
+	for _, field := range allowed {
+		if !exportableFields[field] {
+			return errors.New("unsupported export field")
+		}
+	}
+	return nil
 }
