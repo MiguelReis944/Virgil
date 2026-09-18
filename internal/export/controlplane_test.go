@@ -86,3 +86,25 @@ func TestControlPlaneRejectsEmptyAllowlistBeforeNetwork(t *testing.T) {
 		t.Fatalf("drain: %v n=%d calls=%d", err, n, calls)
 	}
 }
+
+func TestControlPlanePermanentRejectionStopsRetry(t *testing.T) {
+	_, j := openTestJournal(t)
+	bad := appendTo(t, j, "cp-reject")
+	good := appendTo(t, j, "cp-reject")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"accepted_ids": []string{good.EventID},
+			"rejections":   map[string]string{bad.EventID: "invalid_event"},
+		})
+	}))
+	defer server.Close()
+	client := controlplane.NewClient(server.URL, "cred", nil)
+	n, err := DrainControlPlane(context.Background(), j, "cp-reject", client, []string{"provider"}, 10)
+	if err != nil || n != 1 {
+		t.Fatalf("drain: %d %v", n, err)
+	}
+	stats, err := j.OutboxStats(context.Background(), "cp-reject")
+	if err != nil || stats["delivered"] != 1 || stats["dead_letter"] != 1 {
+		t.Fatalf("stats: %v %v", stats, err)
+	}
+}

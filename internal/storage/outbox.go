@@ -141,6 +141,17 @@ func (j *Journal) Fail(ctx context.Context, destination, eventID, errorCode stri
 	return err
 }
 
+// DeadLetter stops retrying a permanently rejected delivery.
+func (j *Journal) DeadLetter(ctx context.Context, destination, eventID, errorCode string) error {
+	if errorCode == "" || len(errorCode) > 64 {
+		return errors.New("invalid error code")
+	}
+	_, err := j.db.ExecContext(ctx, `UPDATE outbox
+		SET state='dead_letter', attempts=attempts+1, last_error_code=?, lease_until_unix_ns=NULL
+		WHERE destination=? AND event_id=? AND state='sending'`, errorCode, destination, eventID)
+	return err
+}
+
 // OutboxStats returns counts per state for a destination (for diagnostics).
 func (j *Journal) OutboxStats(ctx context.Context, destination string) (map[string]int64, error) {
 	rows, err := j.db.QueryContext(ctx,
