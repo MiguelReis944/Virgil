@@ -75,6 +75,18 @@ func TestStalePolicyIgnored(t *testing.T) {
 	}
 }
 
+func TestInvalidRemoteLimitsRejected(t *testing.T) {
+	for _, limits := range []controlplane.CPLimits{
+		{MaxCallsPerRun: -1},
+		{MaxCostPerRunUSD: "-1"},
+		{MaxCostPerRunUSD: "1/2"},
+	} {
+		if _, err := Merge(Limits{}, controlplane.PolicyEnvelope{Version: 1, Limits: limits}, 0); err == nil {
+			t.Fatalf("invalid remote limits accepted: %+v", limits)
+		}
+	}
+}
+
 func TestMergeStricterAllowedList(t *testing.T) {
 	local := Limits{AllowedProviders: []string{"anthropic", "openai"}}
 	remote := controlplane.PolicyEnvelope{

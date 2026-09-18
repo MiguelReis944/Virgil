@@ -260,6 +260,9 @@ func Merge(local Limits, remote controlplane.PolicyEnvelope, lastVersion int64) 
 			return Limits{}, errors.New("negative remote policy limit")
 		}
 	}
+	if _, err := decimal(remote.Limits.MaxCostPerRunUSD); err != nil {
+		return Limits{}, fmt.Errorf("invalid remote cost limit: %w", err)
+	}
 	result := local
 	result.MaxCallsPerRun = stricterInt(local.MaxCallsPerRun, remote.Limits.MaxCallsPerRun)
 	result.MaxInputTokensPerRun = stricterInt(local.MaxInputTokensPerRun, remote.Limits.MaxInputTokensPerRun)
