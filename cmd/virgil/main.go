@@ -66,7 +66,7 @@ func run(args []string) error {
 		return err
 	}
 	defer db.Close()
-	handler, journal, err := buildHandler(cfg, db)
+	handler, journal, engine, err := buildHandlerWithEngine(cfg, db)
 	if err != nil {
 		return err
 	}
@@ -79,6 +79,9 @@ func run(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	if cfg.ControlPlane.Enabled {
+		if err := loadCachedControlPlanePolicy(ctx, journal, engine); err != nil {
+			return fmt.Errorf("cached control plane policy: %w", err)
+		}
 		client, err := configuredControlPlaneClient(cfg.ControlPlane)
 		if err != nil {
 			return fmt.Errorf("control plane credential: %w", err)
@@ -86,7 +89,7 @@ func run(args []string) error {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			runControlPlaneDelivery(ctx, journal, client, cfg.ControlPlane.AllowedFields)
+			runControlPlaneDelivery(ctx, journal, engine, client, cfg.ControlPlane.AllowedFields)
 		}()
 		defer func() { stop(); <-done }()
 	}
@@ -156,9 +159,14 @@ func splitFields(s string) []string {
 }
 
 func buildHandler(cfg config.Config, db *sql.DB) (http.Handler, *storage.Journal, error) {
+	handler, journal, _, err := buildHandlerWithEngine(cfg, db)
+	return handler, journal, err
+}
+
+func buildHandlerWithEngine(cfg config.Config, db *sql.DB) (http.Handler, *storage.Journal, *policies.Engine, error) {
 	journal, err := storage.NewJournal(db)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	engine, err := policies.NewEngine(journal, policies.Limits{
 		MaxCallsPerRun:        cfg.Guardrails.MaxRequestsPerRun,
@@ -174,7 +182,7 @@ func buildHandler(cfg config.Config, db *sql.DB) (http.Handler, *storage.Journal
 	})
 	if err != nil {
 		journal.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var recorder gateway.EventRecorder = journal
 	if cfg.ControlPlane.Enabled {
@@ -186,9 +194,9 @@ func buildHandler(cfg config.Config, db *sql.DB) (http.Handler, *storage.Journal
 	})
 	if err != nil {
 		journal.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return handler, journal, nil
+	return handler, journal, engine, nil
 }
 
 type destinationRecorder struct {

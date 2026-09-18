@@ -2,6 +2,7 @@ package policies
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -56,7 +57,10 @@ type Decision struct {
 
 type Engine struct {
 	journal             *storage.Journal
+	limitsMu            sync.RWMutex
+	localLimits         Limits
 	limits              Limits
+	lastRemoteVersion   int64
 	repetitionMu        sync.Mutex
 	repetitions         map[string]*repetitionState
 	repetitionOrder     []string
@@ -79,7 +83,7 @@ func NewEngine(journal *storage.Journal, limits Limits) (*Engine, error) {
 		return nil, fmt.Errorf("cost cap: %w", err)
 	}
 	return &Engine{
-		journal: journal, limits: limits,
+		journal: journal, localLimits: limits, limits: limits,
 		repetitions:         make(map[string]*repetitionState),
 		providerRepetitions: make(map[string]*callRepetitionState),
 		callRepetitions:     make(map[string]*callRepetitionState),
@@ -103,6 +107,9 @@ func block(runID, reason, policy string, attempt, threshold int64) Decision {
 }
 
 func (e *Engine) Preflight(ctx context.Context, facts RequestFacts) (Decision, error) {
+	e.limitsMu.RLock()
+	limits := e.limits
+	e.limitsMu.RUnlock()
 	runID, err := telemetry.ResolveRunID(facts.RunID)
 	if err != nil {
 		return Decision{}, err
@@ -113,14 +120,14 @@ func (e *Engine) Preflight(ctx context.Context, facts RequestFacts) (Decision, e
 	if e.repeatedToolCall(runID) {
 		return block(runID, "repeated_tool_call", "repeated_call_limit", 4, 3), nil
 	}
-	if e.limits.denyProviders || !allowed(e.limits.AllowedProviders, facts.Provider) {
+	if limits.denyProviders || !allowed(limits.AllowedProviders, facts.Provider) {
 		return block(runID, "provider_not_allowed", "allowed_providers", 0, 0), nil
 	}
-	if e.limits.denyModels || !allowed(e.limits.AllowedModels, facts.Model) {
+	if limits.denyModels || !allowed(limits.AllowedModels, facts.Model) {
 		return block(runID, "model_not_allowed", "allowed_models", 0, 0), nil
 	}
 	for _, name := range facts.ToolNames {
-		if e.limits.denyTools || !allowed(e.limits.AllowedTools, name) {
+		if limits.denyTools || !allowed(limits.AllowedTools, name) {
 			return block(runID, "tool_not_allowed", "allowed_tools", 0, 0), nil
 		}
 	}
@@ -128,10 +135,10 @@ func (e *Engine) Preflight(ctx context.Context, facts RequestFacts) (Decision, e
 	if started.IsZero() {
 		started = time.Now().UTC()
 	}
-	if e.limits.MaxDurationSeconds > 0 && time.Since(started) > time.Duration(e.limits.MaxDurationSeconds)*time.Second {
-		return block(runID, "duration_limit", "max_duration_seconds", 0, e.limits.MaxDurationSeconds), nil
+	if limits.MaxDurationSeconds > 0 && time.Since(started) > time.Duration(limits.MaxDurationSeconds)*time.Second {
+		return block(runID, "duration_limit", "max_duration_seconds", 0, limits.MaxDurationSeconds), nil
 	}
-	if e.limits.MaxCostPerRunUSD != "" && facts.EstimatedCostUSD == "" {
+	if limits.MaxCostPerRunUSD != "" && facts.EstimatedCostUSD == "" {
 		return block(runID, "cost_unavailable", "max_cost_per_run_usd", 0, 0), nil
 	}
 	if _, err := decimal(facts.EstimatedCostUSD); err != nil {
@@ -158,10 +165,10 @@ func (e *Engine) Preflight(ctx context.Context, facts RequestFacts) (Decision, e
 	r, err := e.journal.ReservePolicy(ctx, storage.PolicyReserve{
 		RunID: runID, ReservationID: reservationID, StartedAt: started,
 		InputTokens: input, OutputTokens: output, ToolCalls: toolReservation, CostUSD: facts.EstimatedCostUSD,
-		MaxCalls: e.limits.MaxCallsPerRun, MaxInputTokens: e.limits.MaxInputTokensPerRun,
-		MaxOutputTokens: e.limits.MaxOutputTokensPerRun, MaxTotalTokens: e.limits.MaxTotalTokensPerRun,
-		MaxToolCalls: e.limits.MaxToolCallsPerRun, MaxDurationSeconds: e.limits.MaxDurationSeconds,
-		MaxCostUSD: e.limits.MaxCostPerRunUSD,
+		MaxCalls: limits.MaxCallsPerRun, MaxInputTokens: limits.MaxInputTokensPerRun,
+		MaxOutputTokens: limits.MaxOutputTokensPerRun, MaxTotalTokens: limits.MaxTotalTokensPerRun,
+		MaxToolCalls: limits.MaxToolCallsPerRun, MaxDurationSeconds: limits.MaxDurationSeconds,
+		MaxCostUSD: limits.MaxCostPerRunUSD,
 	})
 	if err != nil {
 		return Decision{}, err
@@ -170,6 +177,49 @@ func (e *Engine) Preflight(ctx context.Context, facts RequestFacts) (Decision, e
 		return block(runID, r.Reason, r.Policy, r.Attempt, r.Threshold), nil
 	}
 	return Decision{Decision: "allow", RunID: runID, ReservationID: reservationID, Attempt: r.Attempt}, nil
+}
+
+// ApplyRemotePolicy replaces the effective limits with a newer, stricter
+// version while retaining the original local limits as the lower bound.
+func (e *Engine) ApplyRemotePolicy(remote controlplane.PolicyEnvelope) error {
+	if remote.Version <= 0 {
+		return errors.New("remote policy version must be positive")
+	}
+	e.limitsMu.Lock()
+	defer e.limitsMu.Unlock()
+	merged, err := Merge(e.localLimits, remote, e.lastRemoteVersion)
+	if err != nil {
+		return err
+	}
+	e.limits = merged
+	e.lastRemoteVersion = remote.Version
+	return nil
+}
+
+func (e *Engine) RemoteVersion() int64 {
+	e.limitsMu.RLock()
+	defer e.limitsMu.RUnlock()
+	return e.lastRemoteVersion
+}
+
+// CacheAndApplyRemotePolicy persists a validated policy before activating it.
+func (e *Engine) CacheAndApplyRemotePolicy(ctx context.Context, remote controlplane.PolicyEnvelope) error {
+	e.limitsMu.Lock()
+	defer e.limitsMu.Unlock()
+	merged, err := Merge(e.localLimits, remote, e.lastRemoteVersion)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(remote)
+	if err != nil {
+		return err
+	}
+	if err := e.journal.SaveRemotePolicy(ctx, remote.Version, payload); err != nil {
+		return err
+	}
+	e.limits = merged
+	e.lastRemoteVersion = remote.Version
+	return nil
 }
 
 func (e *Engine) Postflight(ctx context.Context, facts OutcomeFacts) error {
@@ -199,8 +249,16 @@ func (e *Engine) Postflight(ctx context.Context, facts OutcomeFacts) error {
 // Remote cannot raise a local hard cap; endpoint and export fields are local-only.
 // Returns an error if the remote version is stale (≤ lastVersion, when lastVersion > 0).
 func Merge(local Limits, remote controlplane.PolicyEnvelope, lastVersion int64) (Limits, error) {
+	if remote.Version <= 0 {
+		return Limits{}, errors.New("remote policy version must be positive")
+	}
 	if lastVersion > 0 && remote.Version <= lastVersion {
 		return Limits{}, fmt.Errorf("stale policy version %d (last seen %d)", remote.Version, lastVersion)
+	}
+	for _, v := range []int64{remote.Limits.MaxCallsPerRun, remote.Limits.MaxInputTokensPerRun, remote.Limits.MaxOutputTokensPerRun, remote.Limits.MaxTotalTokensPerRun, remote.Limits.MaxDurationSeconds, remote.Limits.MaxToolCallsPerRun} {
+		if v < 0 {
+			return Limits{}, errors.New("negative remote policy limit")
+		}
 	}
 	result := local
 	result.MaxCallsPerRun = stricterInt(local.MaxCallsPerRun, remote.Limits.MaxCallsPerRun)

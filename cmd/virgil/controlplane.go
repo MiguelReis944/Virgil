@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"github.com/MiguelReis944/Virgil/internal/config"
 	"github.com/MiguelReis944/Virgil/internal/controlplane"
 	"github.com/MiguelReis944/Virgil/internal/export"
+	"github.com/MiguelReis944/Virgil/internal/policies"
 	"github.com/MiguelReis944/Virgil/internal/storage"
 )
 
@@ -31,12 +33,46 @@ func drainControlPlaneOnce(ctx context.Context, journal *storage.Journal, client
 	return err
 }
 
-func runControlPlaneDelivery(ctx context.Context, journal *storage.Journal, client *controlplane.Client, allowed []string) {
+func loadCachedControlPlanePolicy(ctx context.Context, journal *storage.Journal, engine *policies.Engine) error {
+	version, payload, err := journal.LoadRemotePolicy(ctx)
+	if err != nil || payload == nil {
+		return err
+	}
+	var policy controlplane.PolicyEnvelope
+	if err := json.Unmarshal(payload, &policy); err != nil {
+		return err
+	}
+	if policy.Version != version {
+		return errors.New("cached policy version mismatch")
+	}
+	return engine.ApplyRemotePolicy(policy)
+}
+
+func syncControlPlanePolicy(ctx context.Context, engine *policies.Engine, client *controlplane.Client, etag *string) error {
+	policy, err := client.CurrentPolicy(ctx, *etag)
+	if err != nil || policy.Version == 0 {
+		return err
+	}
+	if policy.Version <= engine.RemoteVersion() {
+		return nil
+	}
+	if err := engine.CacheAndApplyRemotePolicy(ctx, policy); err != nil {
+		return err
+	}
+	*etag = policy.ETag
+	return nil
+}
+
+func runControlPlaneDelivery(ctx context.Context, journal *storage.Journal, engine *policies.Engine, client *controlplane.Client, allowed []string) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+	var etag string
 	for {
 		attemptCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		err := drainControlPlaneOnce(attemptCtx, journal, client, allowed)
+		err := syncControlPlanePolicy(attemptCtx, engine, client, &etag)
+		if err == nil {
+			err = drainControlPlaneOnce(attemptCtx, journal, client, allowed)
+		}
 		cancel()
 		if err != nil {
 			var revoked *controlplane.CredentialRevokedError

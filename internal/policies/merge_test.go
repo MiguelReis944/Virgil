@@ -48,6 +48,24 @@ func TestDisjointRemoteAllowlistDeniesProvider(t *testing.T) {
 	}
 }
 
+func TestApplyRemotePolicyTightensActiveEngine(t *testing.T) {
+	engine := testEngine(t, Limits{MaxCallsPerRun: 5})
+	if err := engine.ApplyRemotePolicy(controlplane.PolicyEnvelope{Version: 1, Limits: controlplane.CPLimits{MaxCallsPerRun: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := engine.Preflight(context.Background(), RequestFacts{RunID: "run_remote", Provider: "p", Model: "m"})
+	if err != nil || first.Decision != "allow" {
+		t.Fatalf("first: %+v %v", first, err)
+	}
+	second, err := engine.Preflight(context.Background(), RequestFacts{RunID: "run_remote", Provider: "p", Model: "m"})
+	if err != nil || second.Reason != "call_limit" {
+		t.Fatalf("second: %+v %v", second, err)
+	}
+	if err := engine.ApplyRemotePolicy(controlplane.PolicyEnvelope{Version: 1, Limits: controlplane.CPLimits{MaxCallsPerRun: 100}}); err == nil {
+		t.Fatal("stale policy accepted")
+	}
+}
+
 func TestStalePolicyIgnored(t *testing.T) {
 	local := Limits{MaxCallsPerRun: 10}
 	stale := controlplane.PolicyEnvelope{Version: 1, Limits: controlplane.CPLimits{MaxCallsPerRun: 5}}
