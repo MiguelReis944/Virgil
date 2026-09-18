@@ -27,11 +27,13 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: virgil <serve|events> ...")
+		return fmt.Errorf("usage: virgil <serve|run|events> ...")
 	}
 	switch args[0] {
 	case "events":
 		return runEvents(args[1:])
+	case "run":
+		return runRun(args[1:])
 	case "serve":
 	default:
 		return fmt.Errorf("unknown command: %s", args[0])
