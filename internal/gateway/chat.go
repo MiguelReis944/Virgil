@@ -139,6 +139,20 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 	var policyDecision *telemetry.PolicyDecision
 	var reservationID string
 	defer func() {
+		u := telemetry.FromResult(result.UsageSource, result.InputTokens, result.OutputTokens, result.CachedTokens)
+		var actualCost, estimatedCost *string
+		var pricingVersion, costCurrency string
+		if entry, ok := router.pricingCfg.Models[result.ResponseModel]; ok && entry.InputPerToken != "" {
+			table := pricing.Table{
+				Version: router.pricingCfg.Version, Currency: router.pricingCfg.Currency,
+				InputPerToken: entry.InputPerToken, OutputPerToken: entry.OutputPerToken,
+				CachedPerToken: entry.CachedPerToken,
+			}
+			if c, err := pricing.Calculate(u, table); err == nil {
+				actualCost, estimatedCost = c.ActualCost, c.EstimatedCost
+				pricingVersion, costCurrency = router.pricingCfg.Version, router.pricingCfg.Currency
+			}
+		}
 		if router.policy != nil && reservationID != "" && len(result.ToolCallFingerprints) > 0 {
 			ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 2*time.Second)
 			if err := router.policy.RecordToolCalls(ctx, runID, result.ToolCallFingerprints); err != nil {
@@ -154,32 +168,21 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 			cancel()
 		}
 		if router.policy != nil && reservationID != "" {
+			toolCalls := int64(len(result.ToolCallFingerprints))
+			cost := ""
+			if actualCost != nil {
+				cost = *actualCost
+			} else if estimatedCost != nil {
+				cost = *estimatedCost
+			}
 			ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 2*time.Second)
-			if err := router.policy.Postflight(ctx, policies.OutcomeFacts{RunID: runID, ReservationID: reservationID, InputTokens: result.InputTokens, OutputTokens: result.OutputTokens}); err != nil {
+			if err := router.policy.Postflight(ctx, policies.OutcomeFacts{RunID: runID, ReservationID: reservationID, InputTokens: result.InputTokens, OutputTokens: result.OutputTokens, CostUSD: cost, ToolCalls: &toolCalls}); err != nil {
 				slog.Error("policy reconciliation failed", "code", "policy_postflight_failed")
 			}
 			cancel()
 		}
 		if router.recorder == nil {
 			return
-		}
-		u := telemetry.FromResult(result.UsageSource, result.InputTokens, result.OutputTokens, result.CachedTokens)
-		var actualCost, estimatedCost *string
-		var pricingVersion, costCurrency string
-		if entry, ok := router.pricingCfg.Models[result.ResponseModel]; ok && entry.InputPerToken != "" {
-			table := pricing.Table{
-				Version:        router.pricingCfg.Version,
-				Currency:       router.pricingCfg.Currency,
-				InputPerToken:  entry.InputPerToken,
-				OutputPerToken: entry.OutputPerToken,
-				CachedPerToken: entry.CachedPerToken,
-			}
-			if c, err := pricing.Calculate(u, table); err == nil {
-				actualCost = c.ActualCost
-				estimatedCost = c.EstimatedCost
-				pricingVersion = router.pricingCfg.Version
-				costCurrency = router.pricingCfg.Currency
-			}
 		}
 		event, err := telemetry.Build(telemetry.Attempt{
 			InstallationID: router.installationID,

@@ -1,6 +1,7 @@
 package policies
 
 import (
+	"context"
 	"testing"
 
 	"github.com/MiguelReis944/Virgil/internal/controlplane"
@@ -27,6 +28,23 @@ func TestRemotePolicyCannotRaiseHardCap(t *testing.T) {
 	}
 	if merged.MaxCostPerRunUSD != "1.00" {
 		t.Fatalf("remote raised MaxCostPerRunUSD: got %s, want 1.00", merged.MaxCostPerRunUSD)
+	}
+}
+
+func TestDisjointRemoteAllowlistDeniesProvider(t *testing.T) {
+	local := Limits{AllowedProviders: []string{"openai"}}
+	remote := controlplane.PolicyEnvelope{Version: 1, Limits: controlplane.CPLimits{AllowedProviders: []string{"anthropic"}}}
+	merged, err := Merge(local, remote, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := testEngine(t, merged)
+	decision, err := engine.Preflight(context.Background(), RequestFacts{RunID: "run_disjoint", Provider: "openai", Model: "model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Reason != "provider_not_allowed" {
+		t.Fatalf("disjoint policy allowed provider: %+v", decision)
 	}
 }
 

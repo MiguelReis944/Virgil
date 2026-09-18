@@ -6,7 +6,7 @@ import (
 	"regexp"
 )
 
-var decimalPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)(\.[0-9]{1,9})?$`)
+var decimalPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)(\.[0-9]{1,10})?$`)
 
 func decimal(value string) (*big.Rat, error) {
 	if value == "" {

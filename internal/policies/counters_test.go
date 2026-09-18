@@ -49,6 +49,22 @@ func TestCostAndToolLimits(t *testing.T) {
 	}
 }
 
+func TestDeclaredToolsReserveOnlyOnePossibleCall(t *testing.T) {
+	e := testEngine(t, Limits{MaxToolCallsPerRun: 1})
+	d, err := e.Preflight(context.Background(), RequestFacts{RunID: "run_declared", Provider: "p", Model: "m", ToolNames: []string{"one", "two", "three"}})
+	if err != nil || d.Decision != "allow" {
+		t.Fatalf("declaring tools blocked request: %+v %v", d, err)
+	}
+	zero := int64(0)
+	if err := e.Postflight(context.Background(), OutcomeFacts{RunID: d.RunID, ReservationID: d.ReservationID, ToolCalls: &zero}); err != nil {
+		t.Fatal(err)
+	}
+	d, err = e.Preflight(context.Background(), RequestFacts{RunID: "run_declared", Provider: "p", Model: "m", ToolNames: []string{"one"}})
+	if err != nil || d.Decision != "allow" {
+		t.Fatalf("unused declarations consumed budget: %+v %v", d, err)
+	}
+}
+
 func TestTotalTokenLimit(t *testing.T) {
 	e := testEngine(t, Limits{MaxTotalTokensPerRun: 5})
 	in, out := int64(3), int64(3)

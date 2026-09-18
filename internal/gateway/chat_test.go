@@ -126,6 +126,55 @@ func TestCostUnavailableBlocksAndJournals(t *testing.T) {
 	}
 }
 
+func TestActualCostReconcilesBeforeNextRequest(t *testing.T) {
+	var calls atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"fixture-model","choices":[],"usage":{"prompt_tokens":2,"completion_tokens":0}}`))
+	}))
+	defer upstream.Close()
+	db, err := storage.Open(filepath.Join(t.TempDir(), "virgil.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	j, err := storage.NewJournal(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	e, err := policies.NewEngine(j, policies.Limits{MaxCostPerRunUSD: "0.25"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{
+		Providers:  map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model"}},
+		Guardrails: config.GuardrailsConfig{EstimatedCostPerCallUSD: "0.10"},
+		Pricing:    config.PricingConfig{Version: "test", Currency: "USD", Models: map[string]config.ModelPriceEntry{"fixture-model": {InputPerToken: "0.10", OutputPerToken: "0"}}},
+	}
+	h, err := NewServer(cfg, Dependencies{DB: db, Policy: e})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 2 {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(chatFixture(t)))
+		req.Header.Set("Authorization", "Bearer synthetic-key")
+		req.Header.Set("X-Virgil-Run-ID", "run_cost_actual")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if i == 0 && w.Code != http.StatusOK {
+			t.Fatalf("first: %d %s", w.Code, w.Body.String())
+		}
+		if i == 1 && (w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "cost_limit")) {
+			t.Fatalf("second: %d %s", w.Code, w.Body.String())
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("provider calls=%d", calls.Load())
+	}
+}
+
 func chatServer(t *testing.T, upstreamURL string, getenv func(string) string) http.Handler {
 	t.Helper()
 	db, err := storage.Open(filepath.Join(t.TempDir(), "virgil.db"))

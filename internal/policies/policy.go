@@ -24,6 +24,9 @@ type Limits struct {
 	AllowedProviders      []string
 	AllowedModels         []string
 	AllowedTools          []string
+	denyProviders         bool
+	denyModels            bool
+	denyTools             bool
 }
 
 type RequestFacts struct {
@@ -110,14 +113,14 @@ func (e *Engine) Preflight(ctx context.Context, facts RequestFacts) (Decision, e
 	if e.repeatedToolCall(runID) {
 		return block(runID, "repeated_tool_call", "repeated_call_limit", 4, 3), nil
 	}
-	if !allowed(e.limits.AllowedProviders, facts.Provider) {
+	if e.limits.denyProviders || !allowed(e.limits.AllowedProviders, facts.Provider) {
 		return block(runID, "provider_not_allowed", "allowed_providers", 0, 0), nil
 	}
-	if !allowed(e.limits.AllowedModels, facts.Model) {
+	if e.limits.denyModels || !allowed(e.limits.AllowedModels, facts.Model) {
 		return block(runID, "model_not_allowed", "allowed_models", 0, 0), nil
 	}
 	for _, name := range facts.ToolNames {
-		if !allowed(e.limits.AllowedTools, name) {
+		if e.limits.denyTools || !allowed(e.limits.AllowedTools, name) {
 			return block(runID, "tool_not_allowed", "allowed_tools", 0, 0), nil
 		}
 	}
@@ -148,9 +151,13 @@ func (e *Engine) Preflight(ctx context.Context, facts RequestFacts) (Decision, e
 	if err != nil {
 		return Decision{}, err
 	}
+	toolReservation := int64(0)
+	if len(facts.ToolNames) > 0 {
+		toolReservation = 1
+	}
 	r, err := e.journal.ReservePolicy(ctx, storage.PolicyReserve{
 		RunID: runID, ReservationID: reservationID, StartedAt: started,
-		InputTokens: input, OutputTokens: output, ToolCalls: int64(len(facts.ToolNames)), CostUSD: facts.EstimatedCostUSD,
+		InputTokens: input, OutputTokens: output, ToolCalls: toolReservation, CostUSD: facts.EstimatedCostUSD,
 		MaxCalls: e.limits.MaxCallsPerRun, MaxInputTokens: e.limits.MaxInputTokensPerRun,
 		MaxOutputTokens: e.limits.MaxOutputTokensPerRun, MaxTotalTokens: e.limits.MaxTotalTokensPerRun,
 		MaxToolCalls: e.limits.MaxToolCallsPerRun, MaxDurationSeconds: e.limits.MaxDurationSeconds,
@@ -207,9 +214,13 @@ func Merge(local Limits, remote controlplane.PolicyEnvelope, lastVersion int64) 
 		return Limits{}, fmt.Errorf("merge cost: %w", err)
 	}
 	result.MaxCostPerRunUSD = merged
-	result.AllowedProviders = stricterList(local.AllowedProviders, remote.Limits.AllowedProviders)
-	result.AllowedModels = stricterList(local.AllowedModels, remote.Limits.AllowedModels)
-	result.AllowedTools = stricterList(local.AllowedTools, remote.Limits.AllowedTools)
+	var deny bool
+	result.AllowedProviders, deny = stricterList(local.AllowedProviders, remote.Limits.AllowedProviders)
+	result.denyProviders = local.denyProviders || deny
+	result.AllowedModels, deny = stricterList(local.AllowedModels, remote.Limits.AllowedModels)
+	result.denyModels = local.denyModels || deny
+	result.AllowedTools, deny = stricterList(local.AllowedTools, remote.Limits.AllowedTools)
+	result.denyTools = local.denyTools || deny
 	return result, nil
 }
 
@@ -248,12 +259,12 @@ func stricterCost(a, b string) (string, error) {
 
 // stricterList returns the intersection if both are non-empty; otherwise the non-empty one.
 // An empty list means "all allowed".
-func stricterList(local, remote []string) []string {
+func stricterList(local, remote []string) ([]string, bool) {
 	if len(local) == 0 {
-		return remote
+		return remote, false
 	}
 	if len(remote) == 0 {
-		return local
+		return local, false
 	}
 	remoteSet := make(map[string]bool, len(remote))
 	for _, v := range remote {
@@ -265,5 +276,5 @@ func stricterList(local, remote []string) []string {
 			out = append(out, v)
 		}
 	}
-	return out
+	return out, len(out) == 0
 }
