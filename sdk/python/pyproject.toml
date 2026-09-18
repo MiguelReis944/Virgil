@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "virgil-sdk"
+version = "0.1.0"
+description = "Python SDK for the Virgil Edge Gateway"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pytest-asyncio"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["virgil*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
