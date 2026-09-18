@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MiguelReis944/Virgil/internal/redaction"
 	"github.com/MiguelReis944/Virgil/internal/storage"
 )
 
@@ -135,13 +136,20 @@ type batchResponse struct {
 
 // SendBatch posts a batch of events to the Control Plane.
 // Returns CredentialRevokedError on 401/403 and stops future remote calls.
-func (c *Client) SendBatch(ctx context.Context, batch []storage.Delivery) (BatchAck, error) {
+func (c *Client) SendBatch(ctx context.Context, batch []storage.Delivery, allowed []string) (BatchAck, error) {
+	if len(allowed) == 0 {
+		return BatchAck{}, errors.New("export field allowlist is required")
+	}
 	if c.IsRevoked() {
 		return BatchAck{}, &CredentialRevokedError{StatusCode: http.StatusUnauthorized}
 	}
 	events := make([]batchEvent, 0, len(batch))
 	for _, d := range batch {
-		payload, err := json.Marshal(d.Event)
+		selected, err := redaction.ForExport(d.Event, allowed)
+		if err != nil {
+			return BatchAck{}, fmt.Errorf("select event %s: %w", d.EventID, err)
+		}
+		payload, err := json.Marshal(selected)
 		if err != nil {
 			return BatchAck{}, fmt.Errorf("marshal event %s: %w", d.EventID, err)
 		}

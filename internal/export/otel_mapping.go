@@ -1,6 +1,7 @@
 package export
 
 import (
+	"crypto/rand"
 	"strconv"
 	"time"
 
@@ -56,11 +57,36 @@ func eventToSpan(ev telemetry.Event, allowed map[string]bool) *tracepb.Span {
 	if traceBytes == nil || spanBytes == nil {
 		return nil
 	}
-	startNs := ev.CreatedAt.Add(-time.Duration(ev.LatencyMS) * time.Millisecond).UnixNano()
-	endNs := ev.CreatedAt.UnixNano()
-	status := &tracepb.Status{Code: tracepb.Status_STATUS_CODE_OK}
-	if ev.Status != "success" {
-		status = &tracepb.Status{Code: tracepb.Status_STATUS_CODE_ERROR, Message: ev.Status}
+	if !allowed["trace_id"] && !allowed["*"] {
+		traceBytes = make([]byte, 16)
+		if _, err := rand.Read(traceBytes); err != nil {
+			return nil
+		}
+	}
+	if !allowed["span_id"] && !allowed["*"] {
+		spanBytes = make([]byte, 8)
+		if _, err := rand.Read(spanBytes); err != nil {
+			return nil
+		}
+	}
+	var startNs, endNs uint64
+	if allowed["created_at"] || allowed["*"] {
+		endNs = uint64(ev.CreatedAt.UnixNano())
+		startNs = endNs
+		if allowed["latency_ms"] || allowed["*"] {
+			startNs = uint64(ev.CreatedAt.Add(-time.Duration(ev.LatencyMS) * time.Millisecond).UnixNano())
+		}
+	}
+	var status *tracepb.Status
+	if allowed["status"] || allowed["*"] {
+		status = &tracepb.Status{Code: tracepb.Status_STATUS_CODE_OK}
+		if ev.Status != "success" {
+			status = &tracepb.Status{Code: tracepb.Status_STATUS_CODE_ERROR, Message: ev.Status}
+		}
+	}
+	name := "virgil.event"
+	if allowed["event_type"] || allowed["*"] {
+		name = ev.EventType
 	}
 	attrs := make([]*commonpb.KeyValue, 0, 12)
 	add := func(key, field, val string) {
@@ -109,10 +135,10 @@ func eventToSpan(ev telemetry.Event, allowed map[string]bool) *tracepb.Span {
 	return &tracepb.Span{
 		TraceId:           traceBytes,
 		SpanId:            spanBytes,
-		Name:              ev.EventType,
+		Name:              name,
 		Kind:              tracepb.Span_SPAN_KIND_CLIENT,
-		StartTimeUnixNano: uint64(startNs),
-		EndTimeUnixNano:   uint64(endNs),
+		StartTimeUnixNano: startNs,
+		EndTimeUnixNano:   endNs,
 		Attributes:        attrs,
 		Status:            status,
 	}

@@ -9,7 +9,79 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
+	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
+
+	"github.com/MiguelReis944/Virgil/internal/storage"
+	"github.com/MiguelReis944/Virgil/internal/telemetry"
 )
+
+func TestOTLPPayloadHonorsAllowlist(t *testing.T) {
+	start := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+	ev, err := telemetry.Build(telemetry.Attempt{
+		InstallationID: "install_fixture", RunID: "run_private",
+		TraceID: "0102030405060708090a0b0c0d0e0f10", SpanID: "0102030405060708",
+		Provider: "fixture", RequestedModel: "fixture-model", UsageSource: "unknown",
+		Status: "provider_error", StartedAt: start, EndedAt: start.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got *tracepb.Span
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, readErr := io.ReadAll(r.Body)
+		if readErr != nil {
+			t.Error(readErr)
+			return
+		}
+		field, typ, n := protowire.ConsumeTag(body)
+		if n < 0 || field != 1 || typ != protowire.BytesType {
+			t.Errorf("invalid OTLP envelope")
+			return
+		}
+		value, n := protowire.ConsumeBytes(body[n:])
+		if n < 0 {
+			t.Errorf("invalid resource spans")
+			return
+		}
+		var rs tracepb.ResourceSpans
+		if unmarshalErr := proto.Unmarshal(value, &rs); unmarshalErr != nil {
+			t.Error(unmarshalErr)
+			return
+		}
+		got = rs.ScopeSpans[0].Spans[0]
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	sender := NewOTLPSender(server.URL, nil, nil)
+	_, err = sender.Send(context.Background(), []storage.Delivery{{EventID: ev.EventID, Event: ev}}, []string{"provider"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("no span received")
+	}
+	if got.GetName() == ev.EventType || got.GetStatus() != nil || got.GetEndTimeUnixNano() == uint64(ev.CreatedAt.UnixNano()) {
+		t.Fatalf("private span metadata leaked: %+v", got)
+	}
+	if len(got.GetAttributes()) != 1 || got.GetAttributes()[0].GetKey() != "virgil.provider" {
+		t.Fatalf("attributes=%v", got.GetAttributes())
+	}
+}
+
+func TestOTLPRejectsEmptyAllowlistBeforeNetwork(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(http.StatusOK) }))
+	defer server.Close()
+	d := makeDelivery(t, "install_fixture")
+	sender := NewOTLPSender(server.URL, nil, nil)
+	ids, err := sender.Send(context.Background(), []storage.Delivery{d}, nil)
+	if err == nil || len(ids) != 0 || calls != 0 {
+		t.Fatalf("send: %v ids=%v calls=%d", err, ids, calls)
+	}
+}
 
 func TestRetryAfter429(t *testing.T) {
 	calls := atomic.Int32{}

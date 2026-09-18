@@ -148,7 +148,7 @@ func TestBatchRequestFormat(t *testing.T) {
 	defer server.Close()
 
 	client := controlplane.NewClient(server.URL, "cred_fixture", nil)
-	ack, err := client.SendBatch(context.Background(), []storage.Delivery{delivery})
+	ack, err := client.SendBatch(context.Background(), []storage.Delivery{delivery}, []string{"event_id", "provider"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -67,7 +67,9 @@ func TestReconnectDelivery(t *testing.T) {
 	cpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/events/batch" {
 			var req struct {
-				Events []struct{ EventID string `json:"event_id"` } `json:"events"`
+				Events []struct {
+					EventID string `json:"event_id"`
+				} `json:"events"`
 			}
 			json.NewDecoder(r.Body).Decode(&req)
 			ids := make([]string, len(req.Events))
@@ -83,7 +85,7 @@ func TestReconnectDelivery(t *testing.T) {
 
 	// Drain the outbox to the CP — simulating reconnection.
 	cpClient := controlplane.NewClient(cpServer.URL, "cred_reconnect", nil)
-	n, err := export.DrainControlPlane(context.Background(), journal, dest, cpClient, nil, 10)
+	n, err := export.DrainControlPlane(context.Background(), journal, dest, cpClient, []string{"event_id", "provider"}, 10)
 	if err != nil {
 		t.Fatalf("DrainControlPlane: %v", err)
 	}
@@ -95,7 +97,7 @@ func TestReconnectDelivery(t *testing.T) {
 	}
 
 	// Second drain should find nothing (outbox is empty).
-	n2, err := export.DrainControlPlane(context.Background(), journal, dest, cpClient, nil, 10)
+	n2, err := export.DrainControlPlane(context.Background(), journal, dest, cpClient, []string{"event_id", "provider"}, 10)
 	if err != nil || n2 != 0 {
 		t.Fatalf("second drain: %v n=%d", err, n2)
 	}

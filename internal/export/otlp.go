@@ -10,8 +10,8 @@ import (
 	"time"
 
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/MiguelReis944/Virgil/internal/storage"
 )
@@ -41,6 +41,9 @@ func NewOTLPSender(endpoint string, headers map[string]string, client *http.Clie
 func (s *OTLPSender) Send(ctx context.Context, batch []storage.Delivery, allowed []string) ([]string, error) {
 	if len(batch) == 0 {
 		return nil, nil
+	}
+	if len(allowed) == 0 {
+		return nil, errors.New("export field allowlist is required")
 	}
 	resourceSpans := deliveriesToResourceSpans(batch, allowed)
 	// Manually encode ExportTraceServiceRequest (field 1 = repeated ResourceSpans)
@@ -129,6 +132,9 @@ func parseRetryAfter(resp *http.Response) time.Duration {
 
 // DrainOTLP delivers outbox rows to the OTLP collector, handling retries and dead-lettering.
 func DrainOTLP(ctx context.Context, j *storage.Journal, destination string, sender *OTLPSender, allowed []string, limit int) (int, error) {
+	if len(allowed) == 0 {
+		return 0, errors.New("export field allowlist is required")
+	}
 	now := time.Now()
 	deliveries, err := j.Lease(ctx, destination, limit, now)
 	if err != nil {

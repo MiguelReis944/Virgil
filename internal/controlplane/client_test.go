@@ -52,7 +52,7 @@ func TestBatchAcksOnlyAcceptedEvents(t *testing.T) {
 	}))
 	defer server.Close()
 	client := NewClient(server.URL, "cred_test", nil)
-	ack, err := client.SendBatch(context.Background(), deliveries)
+	ack, err := client.SendBatch(context.Background(), deliveries, []string{"event_id", "provider"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestCredentialNeverInEvent(t *testing.T) {
 	}))
 	defer server.Close()
 	client := NewClient(server.URL, secret, nil)
-	if _, err := client.SendBatch(context.Background(), deliveries); err != nil {
+	if _, err := client.SendBatch(context.Background(), deliveries, []string{"event_id", "provider"}); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(capturedBody), secret) {
@@ -94,7 +94,7 @@ func TestRevokedCredentialStopsRemoteOnly(t *testing.T) {
 	deliveries := makeDeliveries(t, 1)
 
 	// First call hits the server and gets 401.
-	_, err := client.SendBatch(context.Background(), deliveries)
+	_, err := client.SendBatch(context.Background(), deliveries, []string{"event_id", "provider"})
 	var revokedErr *CredentialRevokedError
 	if err == nil {
 		t.Fatal("expected CredentialRevokedError")
@@ -107,7 +107,7 @@ func TestRevokedCredentialStopsRemoteOnly(t *testing.T) {
 	}
 
 	// Second call must NOT hit the server (revoked flag short-circuits).
-	_, err = client.SendBatch(context.Background(), deliveries)
+	_, err = client.SendBatch(context.Background(), deliveries, []string{"event_id", "provider"})
 	if !isCredentialRevokedError(err, &revokedErr) {
 		t.Fatalf("expected CredentialRevokedError on second call, got %v", err)
 	}
