@@ -22,6 +22,12 @@ func runTail(args []string) error {
 	if *format != "text" && *format != "json" {
 		return fmt.Errorf("--format must be text or json")
 	}
+	if *n < 1 {
+		*n = 1
+	}
+	if *n > 1000 {
+		*n = 1000
+	}
 	cfg, err := config.Load(*configPath, os.Getenv)
 	if err != nil {
 		return err

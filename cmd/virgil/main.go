@@ -79,7 +79,7 @@ func run(args []string) error {
 	defer journal.Close()
 	if cfg.Storage.RetentionDays > 0 {
 		if _, err := journal.Prune(context.Background(), time.Now().AddDate(0, 0, -cfg.Storage.RetentionDays)); err != nil {
-			return err
+			slog.Warn("retention prune failed; continuing", "error", err)
 		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)

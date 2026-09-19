@@ -34,7 +34,10 @@ func openDB(path string, maxConns int) (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, fmt.Errorf("create database directory: %w", err)
 	}
-	db, err := sql.Open("sqlite", path)
+	// Embed busy_timeout and foreign_keys in the DSN so every connection in the
+	// pool receives them automatically, not just the first one.
+	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -43,17 +46,10 @@ func openDB(path string, maxConns int) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
+	// WAL mode is a file-level setting; set it once via Exec (it persists).
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("enable WAL: %w", err)
-	}
-	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("set busy timeout: %w", err)
-	}
-	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 	return db, nil
 }

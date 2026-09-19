@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -28,8 +29,8 @@ type RunSpec struct {
 	Command []string
 
 	// Env contains extra environment variables merged onto the inherited
-	// environment. Provider API keys must be passed here explicitly; the runner
-	// never transfers the parent's full credential set automatically.
+	// environment (after credential vars are stripped). Provider API keys that
+	// the child is allowed to use must be passed here explicitly.
 	Env map[string]string
 
 	// RunID is the correlation identifier injected as VIRGIL_RUN_ID.
@@ -79,8 +80,19 @@ func Run(ctx context.Context, spec RunSpec) (RunResult, error) {
 
 	cmd := exec.CommandContext(ctx, spec.Command[0], spec.Command[1:]...)
 
-	// Build environment: inherit parent, then apply explicit overrides.
-	env := os.Environ()
+	// Build environment: inherit parent (minus credential vars), then apply explicit overrides.
+	raw := os.Environ()
+	env := make([]string, 0, len(raw))
+	for _, kv := range raw {
+		upper := strings.ToUpper(kv)
+		if strings.Contains(upper, "API_KEY=") ||
+			strings.Contains(upper, "API_TOKEN=") ||
+			strings.Contains(upper, "SECRET=") ||
+			strings.HasPrefix(upper, "VIRGIL_LOCAL_APP_TOKEN=") {
+			continue
+		}
+		env = append(env, kv)
+	}
 	env = append(env, "VIRGIL_RUN_ID="+runID)
 	if spec.GatewayURL != "" {
 		env = append(env, "VIRGIL_GATEWAY_URL="+spec.GatewayURL)

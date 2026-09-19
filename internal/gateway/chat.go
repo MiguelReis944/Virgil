@@ -40,9 +40,19 @@ type router struct {
 	pricingCfg     config.PricingConfig
 }
 
+// sharedTransport is optimised for many concurrent calls to the same upstream
+// host (e.g. api.openai.com).  No Timeout is set on the Client so that SSE
+// streams are not cut off; ResponseHeaderTimeout guards against slow headers.
+var sharedTransport = &http.Transport{
+	MaxIdleConns:          128,
+	MaxIdleConnsPerHost:   64,
+	IdleConnTimeout:       90 * time.Second,
+	ResponseHeaderTimeout: 30 * time.Second,
+}
+
 func newRouter(cfg config.Config, client *http.Client, getenv func(string) string) (*router, error) {
 	if client == nil {
-		client = &http.Client{Timeout: 60 * time.Second}
+		client = &http.Client{Transport: sharedTransport}
 	}
 	if getenv == nil {
 		getenv = func(string) string { return "" }
@@ -229,11 +239,29 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 		})
 		if err != nil {
 			slog.Error("event rejected", "code", "event_build_failed")
+			// Postflight must still run to release the reservation even if telemetry failed.
+			if router.policy != nil && reservationID != "" {
+				toolCalls := int64(len(result.ToolCallFingerprints))
+				pfCtx, pfCancel := context.WithTimeout(context.WithoutCancel(req.Context()), 2*time.Second)
+				if pfErr := router.policy.Postflight(pfCtx, policies.OutcomeFacts{RunID: runID, ReservationID: reservationID, InputTokens: result.InputTokens, OutputTokens: result.OutputTokens, CostUSD: cost, ToolCalls: &toolCalls}); pfErr != nil {
+					slog.Error("policy reconciliation failed", "code", "policy_postflight_failed")
+				}
+				pfCancel()
+			}
 			return
 		}
 		event, err = redaction.Prepare(event)
 		if err != nil {
 			slog.Error("event rejected", "code", "event_redaction_failed")
+			// Postflight must still run to release the reservation even if redaction failed.
+			if router.policy != nil && reservationID != "" {
+				toolCalls := int64(len(result.ToolCallFingerprints))
+				pfCtx, pfCancel := context.WithTimeout(context.WithoutCancel(req.Context()), 2*time.Second)
+				if pfErr := router.policy.Postflight(pfCtx, policies.OutcomeFacts{RunID: runID, ReservationID: reservationID, InputTokens: result.InputTokens, OutputTokens: result.OutputTokens, CostUSD: cost, ToolCalls: &toolCalls}); pfErr != nil {
+					slog.Error("policy reconciliation failed", "code", "policy_postflight_failed")
+				}
+				pfCancel()
+			}
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 2*time.Second)
