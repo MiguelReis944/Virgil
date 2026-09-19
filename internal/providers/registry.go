@@ -17,10 +17,18 @@ type Registration struct {
 	capabilities []string
 }
 
+// Registry maps routing keys to registrations.
+// Keys are either "model" (when the model name is unambiguous) or "provider:model"
+// (always registered; plain key removed if another provider uses the same model name).
 type Registry map[string]Registration
 
 func NewRegistry(cfg config.Config, client *http.Client) (Registry, error) {
 	registry := make(Registry, len(cfg.Providers))
+	// Track how many providers expose each plain model name.
+	modelCount := make(map[string]int, len(cfg.Providers))
+	for _, provider := range cfg.Providers {
+		modelCount[provider.Model]++
+	}
 	for name, provider := range cfg.Providers {
 		for _, capability := range provider.Capabilities {
 			if capability != "stream" && capability != "tools" {
@@ -34,9 +42,6 @@ func NewRegistry(cfg config.Config, client *http.Client) (Registry, error) {
 		if err != nil || base.Host == "" || base.User != nil || (base.Scheme != "http" && base.Scheme != "https") {
 			return nil, errors.New("invalid provider base URL")
 		}
-		if _, exists := registry[provider.Model]; exists {
-			return nil, errors.New("duplicate configured model")
-		}
 		var adapter Adapter
 		switch provider.Type {
 		case "openai", "kimi", "openai-compatible":
@@ -46,9 +51,15 @@ func NewRegistry(cfg config.Config, client *http.Client) (Registry, error) {
 		default:
 			return nil, errors.New("unsupported provider type")
 		}
-		registry[provider.Model] = Registration{
+		reg := Registration{
 			Adapter: adapter, Provider: name, KeyEnv: provider.APIKeyEnv,
 			capabilities: provider.Capabilities,
+		}
+		// Always register composite key for unambiguous selection.
+		registry[name+":"+provider.Model] = reg
+		// Register plain model key only when no other provider uses the same model name.
+		if modelCount[provider.Model] == 1 {
+			registry[provider.Model] = reg
 		}
 	}
 	return registry, nil

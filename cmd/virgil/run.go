@@ -44,12 +44,14 @@ func runRun(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	policyChan := make(chan struct{})
 	spec := runner.RunSpec{
 		Command:    cmd,
 		Env:        extraEnv,
 		RunID:      *runID,
 		GatewayURL: *gatewayURL,
 		Deadline:   *deadline,
+		PolicyStop: policyChan,
 	}
 
 	slog.Info("starting supervised run", "command", cmd[0], "gateway", *gatewayURL)

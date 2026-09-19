@@ -60,7 +60,7 @@ func TestMigrateEmptyAndExistingDatabase(t *testing.T) {
 	if err := db.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 4 {
+	if count != 6 {
 		t.Fatalf("migration count=%d", count)
 	}
 }

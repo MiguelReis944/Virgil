@@ -154,7 +154,7 @@ func (j *Journal) DeadLetter(ctx context.Context, destination, eventID, errorCod
 
 // OutboxStats returns counts per state for a destination (for diagnostics).
 func (j *Journal) OutboxStats(ctx context.Context, destination string) (map[string]int64, error) {
-	rows, err := j.db.QueryContext(ctx,
+	rows, err := j.readDB.QueryContext(ctx,
 		"SELECT state, COUNT(*) FROM outbox WHERE destination=? GROUP BY state", destination,
 	)
 	if err != nil {
@@ -186,7 +186,7 @@ func (j *Journal) List(ctx context.Context, cursor string, limit int) ([]telemet
 		args = []any{limit + 1}
 	} else {
 		var afterNs int64
-		if scanErr := j.db.QueryRowContext(ctx,
+		if scanErr := j.readDB.QueryRowContext(ctx,
 			"SELECT created_at_unix_ns FROM events WHERE event_id=?", cursor,
 		).Scan(&afterNs); scanErr != nil {
 			return nil, "", scanErr
@@ -196,7 +196,7 @@ func (j *Journal) List(ctx context.Context, cursor string, limit int) ([]telemet
 			ORDER BY created_at_unix_ns, event_id LIMIT ?`
 		args = []any{afterNs, afterNs, cursor, limit + 1}
 	}
-	rows, err := j.db.QueryContext(ctx, query, args...)
+	rows, err := j.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, "", err
 	}

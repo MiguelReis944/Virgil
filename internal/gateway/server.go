@@ -11,11 +11,20 @@ import (
 
 	"github.com/MiguelReis944/Virgil/internal/config"
 	"github.com/MiguelReis944/Virgil/internal/policies"
+	"github.com/MiguelReis944/Virgil/internal/storage"
 	"github.com/MiguelReis944/Virgil/internal/telemetry"
 )
 
 type EventRecorder interface {
 	Record(ctx context.Context, event telemetry.Event) error
+}
+
+// PostflightRecorder is an optional extension of EventRecorder that can combine
+// policy reconciliation, daily counter increment, and event append into one
+// SQLite transaction.  *storage.Journal implements this interface.
+type PostflightRecorder interface {
+	EventRecorder
+	PostflightAndAppend(ctx context.Context, outcome storage.PolicyOutcome, event telemetry.Event, destinations []string, costUSD string) error
 }
 
 type Dependencies struct {

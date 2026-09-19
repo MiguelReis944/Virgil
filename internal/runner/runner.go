@@ -3,9 +3,10 @@ package runner
 
 import (
 	"context"
-	"io"
 	"os"
 	"os/exec"
+	"runtime"
+	"syscall"
 	"time"
 
 	"github.com/MiguelReis944/Virgil/internal/telemetry"
@@ -83,16 +84,19 @@ func Run(ctx context.Context, spec RunSpec) (RunResult, error) {
 	env = append(env, "VIRGIL_RUN_ID="+runID)
 	if spec.GatewayURL != "" {
 		env = append(env, "VIRGIL_GATEWAY_URL="+spec.GatewayURL)
+		env = append(env, "OPENAI_BASE_URL="+spec.GatewayURL+"/v1")
+		env = append(env, "OPENAI_API_BASE="+spec.GatewayURL+"/v1")
+		env = append(env, "ANTHROPIC_BASE_URL="+spec.GatewayURL)
 	}
 	for k, v := range spec.Env {
 		env = append(env, k+"="+v)
 	}
 	cmd.Env = env
 
-	// Stdin is inherited; stdout and stderr are discarded — never recorded.
+	// Stdin is inherited; stdout and stderr mirror to the parent process.
 	cmd.Stdin = os.Stdin
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
 		return RunResult{RunID: runID}, err
@@ -115,16 +119,13 @@ func Run(ctx context.Context, spec RunSpec) (RunResult, error) {
 		// Child exited on its own.
 	case <-timer:
 		stopped = StopDeadline
-		kill(cmd)
-		<-done
+		kill(cmd, done)
 	case <-spec.PolicyStop:
 		stopped = StopPolicyBlock
-		kill(cmd)
-		<-done
+		kill(cmd, done)
 	case <-ctx.Done():
 		stopped = StopContext
-		kill(cmd)
-		<-done
+		kill(cmd, done)
 	}
 
 	exitCode := 0
@@ -135,10 +136,28 @@ func Run(ctx context.Context, spec RunSpec) (RunResult, error) {
 }
 
 // kill terminates the child process group gracefully then forcefully.
-func kill(cmd *exec.Cmd) {
+// done is the same channel the Run loop uses to receive cmd.Wait(); kill blocks
+// until the process exits so the caller does not need a separate <-done.
+// On Unix, SIGTERM is sent first and the process is given 3 seconds to exit
+// before a SIGKILL is delivered. On Windows, Kill() is used directly since
+// SIGTERM does not exist.
+func kill(cmd *exec.Cmd, done <-chan error) {
 	if cmd.Process == nil {
+		<-done
 		return
 	}
-	// Best-effort: ignore errors from Kill since the process may already be gone.
-	_ = cmd.Process.Kill()
+	if runtime.GOOS == "windows" {
+		_ = cmd.Process.Kill()
+		<-done
+		return
+	}
+	// Unix: try graceful shutdown first.
+	_ = cmd.Process.Signal(syscall.SIGTERM)
+	select {
+	case <-done:
+		// Exited cleanly after SIGTERM.
+	case <-time.After(3 * time.Second):
+		_ = cmd.Process.Kill()
+		<-done
+	}
 }

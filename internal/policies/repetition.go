@@ -42,14 +42,13 @@ func (e *Engine) RecordToolCalls(ctx context.Context, runID string, fingerprints
 	if !feedbackRunID.MatchString(runID) {
 		return errors.New("invalid run ID")
 	}
-	for _, fingerprint := range fingerprints {
-		if !toolFingerprint.MatchString(fingerprint) {
+	for _, fp := range fingerprints {
+		if !toolFingerprint.MatchString(fp) {
 			return errors.New("invalid tool fingerprint")
 		}
 	}
 	e.repetitionMu.Lock()
-	defer e.repetitionMu.Unlock()
-	for _, fingerprint := range fingerprints {
+	for _, fp := range fingerprints {
 		state := e.callRepetitions[runID]
 		if state == nil {
 			if len(e.callRepetitions) >= maxRepetitionRuns {
@@ -60,20 +59,59 @@ func (e *Engine) RecordToolCalls(ctx context.Context, runID string, fingerprints
 			e.callRepetitions[runID] = state
 			e.callOrder = append(e.callOrder, runID)
 		}
-		if state.fingerprint == fingerprint {
+		if state.fingerprint == fp {
 			state.count++
 		} else {
-			state.fingerprint = fingerprint
+			state.fingerprint = fp
 			state.count = 1
 		}
+	}
+	var saveCount int64
+	var saveFingerprint string
+	if s := e.callRepetitions[runID]; s != nil {
+		saveCount = s.count
+		saveFingerprint = s.fingerprint
+	}
+	e.repetitionMu.Unlock()
+	// Persist outside mutex — best-effort; restart restores from here.
+	if e.journal != nil && saveFingerprint != "" {
+		_ = e.journal.SaveRepetitionState(ctx, runID, "tool_call", saveCount, []string{saveFingerprint})
 	}
 	return nil
 }
 
-func (e *Engine) repeatedToolCall(runID string) bool {
+// repeatedToolCall checks whether the same tool fingerprint has been seen ≥3 times.
+// On cache miss it lazy-loads from SQLite.
+func (e *Engine) repeatedToolCall(ctx context.Context, runID string) bool {
 	e.repetitionMu.Lock()
-	defer e.repetitionMu.Unlock()
-	return e.callRepetitions[runID] != nil && e.callRepetitions[runID].count >= 3
+	s := e.callRepetitions[runID]
+	e.repetitionMu.Unlock()
+	if s != nil {
+		return s.count >= 3
+	}
+	// Cache miss — try SQLite.
+	if e.journal == nil {
+		return false
+	}
+	count, vals, err := e.journal.LoadRepetitionState(ctx, runID, "tool_call")
+	if err != nil || count == 0 {
+		return false
+	}
+	fp := ""
+	if len(vals) > 0 {
+		fp = vals[0]
+	}
+	e.repetitionMu.Lock()
+	if e.callRepetitions[runID] == nil {
+		if len(e.callRepetitions) >= maxRepetitionRuns {
+			delete(e.callRepetitions, e.callOrder[0])
+			e.callOrder = e.callOrder[1:]
+		}
+		e.callRepetitions[runID] = &callRepetitionState{fingerprint: fp, count: count}
+		e.callOrder = append(e.callOrder, runID)
+	}
+	e.repetitionMu.Unlock()
+	return count >= 3
 }
 
 func (e *Engine) RecordToolResult(ctx context.Context, result ToolResult) (Decision, error) {
@@ -89,7 +127,6 @@ func (e *Engine) RecordToolResult(ctx context.Context, result ToolResult) (Decis
 	}
 	fingerprint := sha256.Sum256([]byte(result.ToolName + "\x00" + result.Status + "\x00" + result.ErrorCode))
 	e.repetitionMu.Lock()
-	defer e.repetitionMu.Unlock()
 	state := e.repetitions[result.RunID]
 	if state == nil {
 		if len(e.repetitions) >= maxRepetitionRuns {
@@ -101,6 +138,7 @@ func (e *Engine) RecordToolResult(ctx context.Context, result ToolResult) (Decis
 		e.repetitionOrder = append(e.repetitionOrder, result.RunID)
 	}
 	if _, duplicate := state.seen[result.ToolCallID]; duplicate {
+		e.repetitionMu.Unlock()
 		return Decision{Decision: "allow", RunID: result.RunID}, nil
 	}
 	if len(state.seen) >= maxFeedbackIDsPerRun {
@@ -117,6 +155,12 @@ func (e *Engine) RecordToolResult(ctx context.Context, result ToolResult) (Decis
 		state.count = 1
 	}
 	state.fingerprint = fingerprint
+	saveCount := state.count
+	e.repetitionMu.Unlock()
+	// Persist outside mutex.
+	if e.journal != nil {
+		_ = e.journal.SaveRepetitionState(ctx, result.RunID, "tool_error", saveCount, []string{result.ToolName, result.ErrorCode})
+	}
 	return Decision{Decision: "allow", RunID: result.RunID}, nil
 }
 
@@ -129,7 +173,6 @@ func (e *Engine) RecordProviderOutcome(ctx context.Context, runID, status, error
 		return errors.New("invalid provider outcome")
 	}
 	e.repetitionMu.Lock()
-	defer e.repetitionMu.Unlock()
 	state := e.providerRepetitions[runID]
 	if state == nil {
 		if len(e.providerRepetitions) >= maxRepetitionRuns {
@@ -149,12 +192,77 @@ func (e *Engine) RecordProviderOutcome(ctx context.Context, runID, status, error
 		state.count = 1
 		state.fingerprint = errorCode
 	}
+	saveCount := state.count
+	saveFingerprint := state.fingerprint
+	e.repetitionMu.Unlock()
+	// Persist outside mutex.
+	if e.journal != nil {
+		_ = e.journal.SaveRepetitionState(ctx, runID, "provider_error", saveCount, []string{saveFingerprint})
+	}
 	return nil
 }
 
-func (e *Engine) repeatedError(runID string) bool {
+// repeatedToolError lazy-loads from SQLite on cache miss.
+func (e *Engine) repeatedToolError(ctx context.Context, runID string) bool {
 	e.repetitionMu.Lock()
-	defer e.repetitionMu.Unlock()
-	return (e.repetitions[runID] != nil && e.repetitions[runID].count >= 3) ||
-		(e.providerRepetitions[runID] != nil && e.providerRepetitions[runID].count >= 3)
+	s := e.repetitions[runID]
+	e.repetitionMu.Unlock()
+	if s != nil {
+		return s.count >= 3
+	}
+	if e.journal == nil {
+		return false
+	}
+	count, _, err := e.journal.LoadRepetitionState(ctx, runID, "tool_error")
+	if err != nil || count == 0 {
+		return false
+	}
+	e.repetitionMu.Lock()
+	if e.repetitions[runID] == nil {
+		if len(e.repetitions) >= maxRepetitionRuns {
+			delete(e.repetitions, e.repetitionOrder[0])
+			e.repetitionOrder = e.repetitionOrder[1:]
+		}
+		e.repetitions[runID] = &repetitionState{count: count, seen: make(map[string]struct{})}
+		e.repetitionOrder = append(e.repetitionOrder, runID)
+	}
+	e.repetitionMu.Unlock()
+	return count >= 3
+}
+
+// repeatedProviderError lazy-loads from SQLite on cache miss.
+func (e *Engine) repeatedProviderError(ctx context.Context, runID string) bool {
+	e.repetitionMu.Lock()
+	s := e.providerRepetitions[runID]
+	e.repetitionMu.Unlock()
+	if s != nil {
+		return s.count >= 3
+	}
+	if e.journal == nil {
+		return false
+	}
+	count, vals, err := e.journal.LoadRepetitionState(ctx, runID, "provider_error")
+	if err != nil || count == 0 {
+		return false
+	}
+	fp := ""
+	if len(vals) > 0 {
+		fp = vals[0]
+	}
+	e.repetitionMu.Lock()
+	if e.providerRepetitions[runID] == nil {
+		if len(e.providerRepetitions) >= maxRepetitionRuns {
+			delete(e.providerRepetitions, e.providerOrder[0])
+			e.providerOrder = e.providerOrder[1:]
+		}
+		e.providerRepetitions[runID] = &callRepetitionState{fingerprint: fp, count: count}
+		e.providerOrder = append(e.providerOrder, runID)
+	}
+	e.repetitionMu.Unlock()
+	return count >= 3
+}
+
+// repeatedError is kept for any callers outside Preflight.
+func (e *Engine) repeatedError(ctx context.Context, runID string) bool {
+	return e.repeatedToolError(ctx, runID) || e.repeatedProviderError(ctx, runID)
 }

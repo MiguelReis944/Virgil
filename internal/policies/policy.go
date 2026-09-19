@@ -28,6 +28,9 @@ type Limits struct {
 	denyProviders         bool
 	denyModels            bool
 	denyTools             bool
+	// Installation-wide daily limits; enforced independently of run_id.
+	MaxCallsPerDay   int64
+	MaxCostPerDayUSD string
 }
 
 type RequestFacts struct {
@@ -74,13 +77,16 @@ func NewEngine(journal *storage.Journal, limits Limits) (*Engine, error) {
 	if journal == nil {
 		return nil, errors.New("policy journal is required")
 	}
-	for _, v := range []int64{limits.MaxCallsPerRun, limits.MaxInputTokensPerRun, limits.MaxOutputTokensPerRun, limits.MaxTotalTokensPerRun, limits.MaxDurationSeconds, limits.MaxToolCallsPerRun} {
+	for _, v := range []int64{limits.MaxCallsPerRun, limits.MaxInputTokensPerRun, limits.MaxOutputTokensPerRun, limits.MaxTotalTokensPerRun, limits.MaxDurationSeconds, limits.MaxToolCallsPerRun, limits.MaxCallsPerDay} {
 		if v < 0 {
 			return nil, errors.New("negative policy limit")
 		}
 	}
 	if _, err := decimal(limits.MaxCostPerRunUSD); err != nil {
 		return nil, fmt.Errorf("cost cap: %w", err)
+	}
+	if _, err := decimal(limits.MaxCostPerDayUSD); err != nil {
+		return nil, fmt.Errorf("daily cost cap: %w", err)
 	}
 	return &Engine{
 		journal: journal, localLimits: limits, limits: limits,
@@ -114,10 +120,13 @@ func (e *Engine) Preflight(ctx context.Context, facts RequestFacts) (Decision, e
 	if err != nil {
 		return Decision{}, err
 	}
-	if e.repeatedError(runID) {
+	if e.repeatedToolError(ctx, runID) {
 		return block(runID, "repeated_tool_error", "repeated_error_limit", 4, 3), nil
 	}
-	if e.repeatedToolCall(runID) {
+	if e.repeatedProviderError(ctx, runID) {
+		return block(runID, "repeated_provider_error", "repeated_error_limit", 4, 3), nil
+	}
+	if e.repeatedToolCall(ctx, runID) {
 		return block(runID, "repeated_tool_call", "repeated_call_limit", 4, 3), nil
 	}
 	if limits.denyProviders || !allowed(limits.AllowedProviders, facts.Provider) {
@@ -135,14 +144,35 @@ func (e *Engine) Preflight(ctx context.Context, facts RequestFacts) (Decision, e
 	if started.IsZero() {
 		started = time.Now().UTC()
 	}
-	if limits.MaxDurationSeconds > 0 && time.Since(started) > time.Duration(limits.MaxDurationSeconds)*time.Second {
-		return block(runID, "duration_limit", "max_duration_seconds", 0, limits.MaxDurationSeconds), nil
-	}
 	if limits.MaxCostPerRunUSD != "" && facts.EstimatedCostUSD == "" {
 		return block(runID, "cost_unavailable", "max_cost_per_run_usd", 0, 0), nil
 	}
 	if _, err := decimal(facts.EstimatedCostUSD); err != nil {
 		return Decision{}, fmt.Errorf("cost estimate: %w", err)
+	}
+	// Daily installation budget check — independent of run_id.
+	if limits.MaxCallsPerDay > 0 || limits.MaxCostPerDayUSD != "" {
+		dailyCalls, dailyCost, err := e.journal.ReadDailyCounters(ctx)
+		if err != nil {
+			return Decision{}, fmt.Errorf("daily counters: %w", err)
+		}
+		if limits.MaxCallsPerDay > 0 && dailyCalls >= limits.MaxCallsPerDay {
+			return block(runID, "daily_call_limit", "max_calls_per_day", dailyCalls+1, limits.MaxCallsPerDay), nil
+		}
+		if limits.MaxCostPerDayUSD != "" {
+			capDay, err := decimal(limits.MaxCostPerDayUSD)
+			if err != nil {
+				return Decision{}, err
+			}
+			estCost, err := decimal(facts.EstimatedCostUSD)
+			if err != nil {
+				return Decision{}, err
+			}
+			nextDailyCost := new(big.Rat).Add(dailyCost, estCost)
+			if capDay.Sign() > 0 && nextDailyCost.Cmp(capDay) > 0 {
+				return block(runID, "daily_cost_limit", "max_cost_per_day_usd", 0, 0), nil
+			}
+		}
 	}
 	input, output := int64(0), int64(0)
 	if facts.EstimatedInputTokens != nil {
@@ -242,7 +272,10 @@ func (e *Engine) Postflight(ctx context.Context, facts OutcomeFacts) error {
 	if _, err := decimal(facts.CostUSD); err != nil {
 		return fmt.Errorf("actual cost: %w", err)
 	}
-	return e.journal.ReconcilePolicy(ctx, storage.PolicyOutcome{RunID: facts.RunID, ReservationID: facts.ReservationID, InputTokens: input, OutputTokens: output, ToolCalls: tools, CostUSD: facts.CostUSD})
+	if err := e.journal.ReconcilePolicy(ctx, storage.PolicyOutcome{RunID: facts.RunID, ReservationID: facts.ReservationID, InputTokens: input, OutputTokens: output, ToolCalls: tools, CostUSD: facts.CostUSD}); err != nil {
+		return err
+	}
+	return e.journal.IncrementDailyCounters(ctx, facts.CostUSD)
 }
 
 // Merge returns effective Limits by taking the stricter of local and remote.

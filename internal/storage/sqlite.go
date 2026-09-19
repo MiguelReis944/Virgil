@@ -30,7 +30,8 @@ type appendRequest struct {
 }
 
 type Journal struct {
-	db             *sql.DB
+	db             *sql.DB // write-only connection (MaxOpenConns=1)
+	readDB         *sql.DB // optional concurrent read pool (WAL mode)
 	installationID string
 	writes         chan appendRequest
 	done           chan struct{}
@@ -102,6 +103,13 @@ func localInstallationID(db *sql.DB) (string, error) {
 }
 
 func NewJournal(db *sql.DB) (*Journal, error) {
+	return NewJournalWithReadPool(db, nil)
+}
+
+// NewJournalWithReadPool creates a Journal with a dedicated read pool.
+// In WAL mode SQLite allows concurrent readers alongside the single writer;
+// pass readDB from OpenReadPool to take advantage of that concurrency.
+func NewJournalWithReadPool(db, readDB *sql.DB) (*Journal, error) {
 	if db == nil {
 		return nil, errors.New("database connection is required")
 	}
@@ -112,8 +120,11 @@ func NewJournal(db *sql.DB) (*Journal, error) {
 	if err != nil {
 		return nil, err
 	}
+	if readDB == nil {
+		readDB = db
+	}
 	j := &Journal{
-		db: db, installationID: id,
+		db: db, readDB: readDB, installationID: id,
 		writes: make(chan appendRequest, writeQueueSize),
 		done:   make(chan struct{}),
 	}
@@ -200,10 +211,33 @@ func (j *Journal) appendTransaction(event telemetry.Event, destinations []string
 
 func (j *Journal) Get(ctx context.Context, eventID string) (telemetry.Event, error) {
 	var encoded []byte
-	if err := j.db.QueryRowContext(ctx, "SELECT payload FROM events WHERE event_id=?", eventID).Scan(&encoded); err != nil {
+	if err := j.readDB.QueryRowContext(ctx, "SELECT payload FROM events WHERE event_id=?", eventID).Scan(&encoded); err != nil {
 		return telemetry.Event{}, err
 	}
 	return telemetry.DecodeEvent(strings.NewReader(string(encoded)))
+}
+
+// ListRecent returns the most recent limit events ordered newest-first.
+func (j *Journal) ListRecent(ctx context.Context, limit int64) ([]telemetry.Event, error) {
+	rows, err := j.readDB.QueryContext(ctx,
+		"SELECT payload FROM events ORDER BY created_at_unix_ns DESC LIMIT ?", limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []telemetry.Event
+	for rows.Next() {
+		var encoded []byte
+		if err := rows.Scan(&encoded); err != nil {
+			return nil, err
+		}
+		ev, err := telemetry.DecodeEvent(strings.NewReader(string(encoded)))
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, ev)
+	}
+	return events, rows.Err()
 }
 
 func (j *Journal) Close() {

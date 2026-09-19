@@ -48,6 +48,9 @@ type GuardrailsConfig struct {
 	EstimatedCostPerCallUSD      string   `toml:"estimated_cost_per_call_usd"`
 	EstimatedInputTokensPerCall  int64    `toml:"estimated_input_tokens_per_call"`
 	EstimatedOutputTokensPerCall int64    `toml:"estimated_output_tokens_per_call"`
+	// Installation-wide daily limits — independent of run_id, cannot be bypassed.
+	MaxCallsPerDay   int64  `toml:"max_calls_per_day"`
+	MaxCostPerDayUSD string `toml:"max_cost_per_day_usd"`
 }
 
 type ServerConfig struct {
@@ -136,12 +139,12 @@ func Load(path string, _ func(string) string) (Config, error) {
 		}
 	}
 	g := cfg.Guardrails
-	for _, n := range []int64{g.MaxRequestsPerRun, g.MaxInputTokensPerRun, g.MaxOutputTokensPerRun, g.MaxTotalTokensPerRun, g.MaxDurationSeconds, g.MaxToolCallsPerRun, g.EstimatedInputTokensPerCall, g.EstimatedOutputTokensPerCall} {
+	for _, n := range []int64{g.MaxRequestsPerRun, g.MaxInputTokensPerRun, g.MaxOutputTokensPerRun, g.MaxTotalTokensPerRun, g.MaxDurationSeconds, g.MaxToolCallsPerRun, g.EstimatedInputTokensPerCall, g.EstimatedOutputTokensPerCall, g.MaxCallsPerDay} {
 		if n < 0 {
 			return Config{}, fmt.Errorf("guardrail counts cannot be negative")
 		}
 	}
-	for _, amount := range []string{g.MaxCostPerRunUSD, g.EstimatedCostPerCallUSD} {
+	for _, amount := range []string{g.MaxCostPerRunUSD, g.EstimatedCostPerCallUSD, g.MaxCostPerDayUSD} {
 		if amount != "" && !policyDecimal.MatchString(amount) {
 			return Config{}, fmt.Errorf("invalid guardrail cost")
 		}

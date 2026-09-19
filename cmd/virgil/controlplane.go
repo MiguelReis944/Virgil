@@ -28,6 +28,7 @@ func configuredControlPlaneClient(cfg config.ControlPlaneConfig) (*controlplane.
 	return controlplane.NewClient(strings.TrimRight(cfg.Endpoint, "/"), credential, nil), nil
 }
 
+
 func drainControlPlaneOnce(ctx context.Context, journal *storage.Journal, client *controlplane.Client, allowed []string) error {
 	_, err := export.DrainControlPlane(ctx, journal, "controlplane", client, allowed, 100)
 	return err
@@ -64,14 +65,18 @@ func syncControlPlanePolicy(ctx context.Context, engine *policies.Engine, client
 }
 
 func runControlPlaneDelivery(ctx context.Context, journal *storage.Journal, engine *policies.Engine, client *controlplane.Client, allowed []string) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
+	const baseInterval = 5 * time.Second
+	const maxInterval = 120 * time.Second
+	interval := baseInterval
 	var etag string
+	var idleStreak int
 	for {
+		prevEtag := etag
 		attemptCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		err := syncControlPlanePolicy(attemptCtx, engine, client, &etag)
+		var drained int
 		if err == nil {
-			err = drainControlPlaneOnce(attemptCtx, journal, client, allowed)
+			drained, err = export.DrainControlPlane(attemptCtx, journal, "controlplane", client, allowed, 100)
 		}
 		cancel()
 		if err != nil {
@@ -82,10 +87,22 @@ func runControlPlaneDelivery(ctx context.Context, journal *storage.Journal, engi
 			}
 			slog.Warn("control plane delivery deferred", "code", "controlplane_delivery_failed")
 		}
+		// Backoff when idle: no events sent and ETag unchanged.
+		if drained == 0 && etag == prevEtag {
+			idleStreak++
+			nextInterval := time.Duration(5*(1<<idleStreak)) * time.Second
+			if nextInterval > maxInterval {
+				nextInterval = maxInterval
+			}
+			interval = nextInterval
+		} else {
+			idleStreak = 0
+			interval = baseInterval
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-time.After(interval):
 		}
 	}
 }

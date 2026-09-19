@@ -17,6 +17,7 @@ import (
 	"github.com/MiguelReis944/Virgil/internal/pricing"
 	"github.com/MiguelReis944/Virgil/internal/providers"
 	"github.com/MiguelReis944/Virgil/internal/redaction"
+	"github.com/MiguelReis944/Virgil/internal/storage"
 	"github.com/MiguelReis944/Virgil/internal/telemetry"
 )
 
@@ -62,12 +63,31 @@ func newRouter(cfg config.Config, client *http.Client, getenv func(string) strin
 	return r, nil
 }
 
+var errorMessages = map[string]string{
+	"request_too_large":      "Request body exceeds the 1 MiB limit.",
+	"request_timeout":        "The upstream read timed out.",
+	"invalid_request":        "Request body is not valid JSON or is missing required fields.",
+	"model_not_configured":   "The requested model is not configured in this gateway. Check the 'model' field or run 'virgil init' to generate a config.",
+	"unsupported_request":    "The request uses capabilities not supported by this model (e.g. streaming or tools). Check the provider capabilities.",
+	"provider_key_required":  "No API key could be resolved for this provider. Set the env var referenced in the provider's api_key config field.",
+	"invalid_provider_config": "Provider config is invalid. Check the provider base_url and type in virgil.toml.",
+	"trace_unavailable":      "Failed to generate a trace ID.",
+	"run_id_unavailable":     "Failed to resolve or generate a run ID.",
+	"policy_unavailable":     "Policy engine is unavailable. The gateway may still be starting.",
+	"provider_transport_error": "Could not reach the upstream provider. Check network connectivity and the provider base_url.",
+	"provider_response_error": "The upstream provider returned an unexpected response format.",
+}
+
 func writeAPIError(w http.ResponseWriter, status int, code string) {
+	msg := errorMessages[code]
+	if msg == "" {
+		msg = http.StatusText(status)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"error": map[string]string{
-			"message": http.StatusText(status),
+			"message": msg,
 			"type":    "gateway_error",
 			"code":    code,
 		},
@@ -167,21 +187,22 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 			}
 			cancel()
 		}
-		if router.policy != nil && reservationID != "" {
-			toolCalls := int64(len(result.ToolCallFingerprints))
-			cost := ""
-			if actualCost != nil {
-				cost = *actualCost
-			} else if estimatedCost != nil {
-				cost = *estimatedCost
-			}
-			ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 2*time.Second)
-			if err := router.policy.Postflight(ctx, policies.OutcomeFacts{RunID: runID, ReservationID: reservationID, InputTokens: result.InputTokens, OutputTokens: result.OutputTokens, CostUSD: cost, ToolCalls: &toolCalls}); err != nil {
-				slog.Error("policy reconciliation failed", "code", "policy_postflight_failed")
-			}
-			cancel()
+		cost := ""
+		if actualCost != nil {
+			cost = *actualCost
+		} else if estimatedCost != nil {
+			cost = *estimatedCost
 		}
 		if router.recorder == nil {
+			// Still need to postflight even without a recorder.
+			if router.policy != nil && reservationID != "" {
+				toolCalls := int64(len(result.ToolCallFingerprints))
+				ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 2*time.Second)
+				if err := router.policy.Postflight(ctx, policies.OutcomeFacts{RunID: runID, ReservationID: reservationID, InputTokens: result.InputTokens, OutputTokens: result.OutputTokens, CostUSD: cost, ToolCalls: &toolCalls}); err != nil {
+					slog.Error("policy reconciliation failed", "code", "policy_postflight_failed")
+				}
+				cancel()
+			}
 			return
 		}
 		event, err := telemetry.Build(telemetry.Attempt{
@@ -217,6 +238,35 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 		}
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 2*time.Second)
 		defer cancel()
+		// If recorder supports combined postflight+append, use one transaction.
+		if pr, ok := router.recorder.(PostflightRecorder); ok && router.policy != nil && reservationID != "" {
+			toolCalls := int64(len(result.ToolCallFingerprints))
+			outcome := storage.PolicyOutcome{
+				RunID: runID, ReservationID: reservationID,
+				ToolCalls: toolCalls, CostUSD: cost,
+			}
+			if result.InputTokens != nil {
+				outcome.InputTokens = *result.InputTokens
+			} else {
+				outcome.InputTokens = -1
+			}
+			if result.OutputTokens != nil {
+				outcome.OutputTokens = *result.OutputTokens
+			} else {
+				outcome.OutputTokens = -1
+			}
+			if err := pr.PostflightAndAppend(ctx, outcome, event, nil, cost); err != nil {
+				slog.Error("postflight+append failed", "code", "journal_write_failed")
+			}
+			return
+		}
+		// Fallback: separate postflight then record (e.g. control-plane outbox recorder).
+		if router.policy != nil && reservationID != "" {
+			toolCalls := int64(len(result.ToolCallFingerprints))
+			if err := router.policy.Postflight(ctx, policies.OutcomeFacts{RunID: runID, ReservationID: reservationID, InputTokens: result.InputTokens, OutputTokens: result.OutputTokens, CostUSD: cost, ToolCalls: &toolCalls}); err != nil {
+				slog.Error("policy reconciliation failed", "code", "policy_postflight_failed")
+			}
+		}
 		if err := router.recorder.Record(ctx, event); err != nil {
 			slog.Error("event record failed", "code", "journal_write_failed")
 		}

@@ -6,11 +6,28 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	_ "modernc.org/sqlite"
 )
 
+// Open returns the write connection (MaxOpenConns=1).
+// Use OpenReadPool for a concurrent-reader pool in WAL mode.
 func Open(path string) (*sql.DB, error) {
+	return openDB(path, 1)
+}
+
+// OpenReadPool returns a read-only pool. WAL mode allows concurrent readers
+// alongside the single write connection returned by Open.
+func OpenReadPool(path string) (*sql.DB, error) {
+	n := runtime.NumCPU()
+	if n < 2 {
+		n = 2
+	}
+	return openDB(path, n)
+}
+
+func openDB(path string, maxConns int) (*sql.DB, error) {
 	if path == "" {
 		return nil, errors.New("database path is required")
 	}
@@ -21,7 +38,7 @@ func Open(path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
-	db.SetMaxOpenConns(1)
+	db.SetMaxOpenConns(maxConns)
 	if err := db.Ping(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("connect database: %w", err)

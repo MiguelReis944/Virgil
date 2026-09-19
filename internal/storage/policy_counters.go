@@ -145,6 +145,67 @@ func (j *Journal) ReservePolicy(ctx context.Context, r PolicyReserve) (PolicyRes
 	return PolicyReserveResult{Attempt: calls + 1}, nil
 }
 
+// ReadDailyCounters returns the total calls and accumulated cost for the current UTC day.
+func (j *Journal) ReadDailyCounters(ctx context.Context) (int64, *big.Rat, error) {
+	day := time.Now().UTC().Format("2006-01-02")
+	var calls int64
+	var costText string
+	err := j.readDB.QueryRowContext(ctx, "SELECT calls, cost_usd FROM installation_daily_counters WHERE day_utc=?", day).Scan(&calls, &costText)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, new(big.Rat), nil
+	}
+	if err != nil {
+		return 0, nil, err
+	}
+	cost, err := policyDecimal(costText)
+	if err != nil {
+		return 0, nil, err
+	}
+	return calls, cost, nil
+}
+
+// IncrementDailyCounters adds one call and the given cost to today's installation counter.
+// costUSD may be empty (treated as zero).
+func (j *Journal) IncrementDailyCounters(ctx context.Context, costUSD string) error {
+	tx, err := j.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := incrementDailyCountersTx(ctx, tx, costUSD); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func incrementDailyCountersTx(ctx context.Context, tx interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, costUSD string) error {
+	day := time.Now().UTC().Format("2006-01-02")
+	cost, err := policyDecimal(costUSD)
+	if err != nil {
+		return err
+	}
+	var existing int64
+	var existingCostText string
+	err = tx.QueryRowContext(ctx, "SELECT calls, cost_usd FROM installation_daily_counters WHERE day_utc=?", day).Scan(&existing, &existingCostText)
+	if errors.Is(err, sql.ErrNoRows) {
+		_, err = tx.ExecContext(ctx, "INSERT INTO installation_daily_counters(day_utc,calls,cost_usd) VALUES (?,1,?)", day, cost.RatString())
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	existingCost, err := policyDecimal(existingCostText)
+	if err != nil {
+		return err
+	}
+	newCost := new(big.Rat).Add(existingCost, cost)
+	_, err = tx.ExecContext(ctx, "UPDATE installation_daily_counters SET calls=calls+1, cost_usd=? WHERE day_utc=?", newCost.RatString(), day)
+	return err
+}
+
 func (j *Journal) ReconcilePolicy(ctx context.Context, o PolicyOutcome) error {
 	if o.ReservationID == "" || o.RunID == "" {
 		return errors.New("run and reservation IDs are required")
@@ -154,10 +215,20 @@ func (j *Journal) ReconcilePolicy(ctx context.Context, o PolicyOutcome) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err := reconcilePolicyTx(ctx, tx, o); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func reconcilePolicyTx(ctx context.Context, tx interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, o PolicyOutcome) error {
 	var oldIn, oldOut, oldTools int64
 	var oldCostText string
 	var reconciled bool
-	err = tx.QueryRowContext(ctx, "SELECT input_tokens,output_tokens,tool_calls,cost_usd,reconciled FROM policy_reservations WHERE reservation_id=? AND run_id=?", o.ReservationID, o.RunID).Scan(&oldIn, &oldOut, &oldTools, &oldCostText, &reconciled)
+	err := tx.QueryRowContext(ctx, "SELECT input_tokens,output_tokens,tool_calls,cost_usd,reconciled FROM policy_reservations WHERE reservation_id=? AND run_id=?", o.ReservationID, o.RunID).Scan(&oldIn, &oldOut, &oldTools, &oldCostText, &reconciled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("unknown policy reservation: %w", err)
 	}
@@ -228,5 +299,5 @@ func (j *Journal) ReconcilePolicy(ctx context.Context, o PolicyOutcome) error {
 	if _, err = tx.ExecContext(ctx, "UPDATE policy_reservations SET reconciled=1,input_tokens=?,output_tokens=?,tool_calls=?,cost_usd=? WHERE reservation_id=?", input, output, tools, actualCost.RatString(), o.ReservationID); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }

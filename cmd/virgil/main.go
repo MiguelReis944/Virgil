@@ -35,17 +35,18 @@ func run(args []string) error {
 		return runEvents(args[1:])
 	case "run":
 		return runRun(args[1:])
+	case "init":
+		return runInit(args[1:])
+	case "tail":
+		return runTail(args[1:])
 	case "serve":
 	default:
-		return fmt.Errorf("unknown command: %s", args[0])
+		return fmt.Errorf("unknown command: %s (available: serve, run, events, init, tail)", args[0])
 	}
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
-	configPath := flags.String("config", "", "path to local TOML configuration")
+	configPath := flags.String("config", "virgil.toml", "path to TOML configuration (default: virgil.toml in current directory)")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
-	}
-	if *configPath == "" {
-		return fmt.Errorf("--config is required")
 	}
 	cfg, err := config.Load(*configPath, os.Getenv)
 	if err != nil {
@@ -66,7 +67,12 @@ func run(args []string) error {
 		return err
 	}
 	defer db.Close()
-	handler, journal, engine, err := buildHandlerWithEngine(cfg, db)
+	readDB, err := storage.OpenReadPool(cfg.Storage.Path)
+	if err != nil {
+		return err
+	}
+	defer readDB.Close()
+	handler, journal, engine, err := buildHandlerWithEngine(cfg, db, readDB)
 	if err != nil {
 		return err
 	}
@@ -159,12 +165,12 @@ func splitFields(s string) []string {
 }
 
 func buildHandler(cfg config.Config, db *sql.DB) (http.Handler, *storage.Journal, error) {
-	handler, journal, _, err := buildHandlerWithEngine(cfg, db)
+	handler, journal, _, err := buildHandlerWithEngine(cfg, db, nil)
 	return handler, journal, err
 }
 
-func buildHandlerWithEngine(cfg config.Config, db *sql.DB) (http.Handler, *storage.Journal, *policies.Engine, error) {
-	journal, err := storage.NewJournal(db)
+func buildHandlerWithEngine(cfg config.Config, db, readDB *sql.DB) (http.Handler, *storage.Journal, *policies.Engine, error) {
+	journal, err := storage.NewJournalWithReadPool(db, readDB)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -179,6 +185,8 @@ func buildHandlerWithEngine(cfg config.Config, db *sql.DB) (http.Handler, *stora
 		AllowedProviders:      cfg.Guardrails.AllowedProviders,
 		AllowedModels:         cfg.Guardrails.AllowedModels,
 		AllowedTools:          cfg.Guardrails.AllowedTools,
+		MaxCallsPerDay:        cfg.Guardrails.MaxCallsPerDay,
+		MaxCostPerDayUSD:      cfg.Guardrails.MaxCostPerDayUSD,
 	})
 	if err != nil {
 		journal.Close()
