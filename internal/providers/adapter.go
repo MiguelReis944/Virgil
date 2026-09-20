@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 type Result struct {
@@ -16,6 +17,10 @@ type Result struct {
 	Status               string
 	ToolCallFingerprints []string
 	toolStreams          map[toolStreamKey]*toolStreamFingerprint
+	// Content fields — populated by adapters that support capture; empty otherwise.
+	ResponseText string // assistant message text on success
+	ErrorBody    string // provider error body on failure
+	contentBuf   strings.Builder
 }
 
 type Adapter interface {

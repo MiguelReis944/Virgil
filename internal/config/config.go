@@ -20,6 +20,11 @@ type Config struct {
 	Guardrails   GuardrailsConfig          `toml:"guardrails"`
 	Providers    map[string]ProviderConfig `toml:"providers"`
 	Pricing      PricingConfig             `toml:"pricing"`
+	Dashboard    DashboardConfig           `toml:"dashboard"`
+}
+
+type DashboardConfig struct {
+	Password string `toml:"password"` // plain text or ${ENV_VAR}
 }
 
 type PricingConfig struct {
@@ -175,6 +180,11 @@ func Load(path string, _ func(string) string) (Config, error) {
 		}
 		if entry.CachedPerToken != "" && !decimalPrice.MatchString(entry.CachedPerToken) {
 			return Config{}, fmt.Errorf("invalid pricing decimal")
+		}
+	}
+	if p := cfg.Dashboard.Password; p != "" {
+		if match := envReference.FindStringSubmatch(p); match != nil {
+			cfg.Dashboard.Password = os.Getenv(match[1])
 		}
 	}
 	for name, provider := range cfg.Providers {

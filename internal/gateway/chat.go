@@ -19,6 +19,7 @@ import (
 	"github.com/MiguelReis944/Virgil/internal/redaction"
 	"github.com/MiguelReis944/Virgil/internal/storage"
 	"github.com/MiguelReis944/Virgil/internal/telemetry"
+
 )
 
 const maxChatRequest = 1 << 20
@@ -48,7 +49,7 @@ var sharedTransport = &http.Transport{
 	MaxIdleConns:          128,
 	MaxIdleConnsPerHost:   64,
 	IdleConnTimeout:       90 * time.Second,
-	ResponseHeaderTimeout: 30 * time.Second,
+	ResponseHeaderTimeout: 120 * time.Second,
 }
 
 func newRouter(cfg config.Config, client *http.Client, getenv func(string) string) (*router, error) {
@@ -159,6 +160,12 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 		writeAPIError(w, http.StatusUnauthorized, "provider_key_required")
 		return
 	}
+	slog.Info("→ request",
+		"provider", selected.provider,
+		"model", selector.Model,
+		"stream", selector.Stream,
+		"run_id", req.Header.Get("X-Virgil-Run-ID"),
+	)
 	upstreamReq, err := selected.adapter.Build(req.Context(), body, key)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_provider_config")
@@ -181,6 +188,15 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 	var policyDecision *telemetry.PolicyDecision
 	var reservationID string
 	defer func() {
+		slog.Info("← response",
+			"status", result.Status,
+			"provider", selected.provider,
+			"model", selector.Model,
+			"in_tokens", result.InputTokens,
+			"out_tokens", result.OutputTokens,
+			"duration_ms", time.Since(started).Milliseconds(),
+			"error_code", result.ErrorCode,
+		)
 		u := telemetry.FromResult(result.UsageSource, result.InputTokens, result.OutputTokens, result.CachedTokens)
 		var actualCost, estimatedCost *string
 		var pricingVersion, costCurrency string
@@ -293,6 +309,23 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 		}
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 2*time.Second)
 		defer cancel()
+		// Save prompt/response content if the recorder supports it.
+		if cs, ok := router.recorder.(ContentSaver); ok {
+			var promptJSON string
+			var msgHolder struct {
+				Messages json.RawMessage `json:"messages"`
+			}
+			if json.Unmarshal(body, &msgHolder) == nil && len(msgHolder.Messages) > 0 {
+				promptJSON = string(msgHolder.Messages)
+			}
+			_ = cs.SaveContent(ctx, storage.ContentRecord{
+				EventID:      event.EventID,
+				PromptJSON:   promptJSON,
+				ResponseText: result.ResponseText,
+				ErrorMessage: result.ErrorBody,
+				CreatedAtNS:  event.CreatedAt.UnixNano(),
+			})
+		}
 		// If recorder supports combined postflight+append, use one transaction.
 		if pr, ok := router.recorder.(PostflightRecorder); ok && router.policy != nil && reservationID != "" {
 			toolCalls := int64(len(result.ToolCallFingerprints))
@@ -408,13 +441,16 @@ func (router *router) resolveKey(header, providerKeyEnv string) (string, bool) {
 		return "", false
 	}
 	presented := parts[1]
-	localToken := router.getenv("VIRGIL_LOCAL_APP_TOKEN")
-	if localToken != "" && subtle.ConstantTimeCompare([]byte(presented), []byte(localToken)) == 1 {
-		if providerKeyEnv == "" {
-			return "", false
+	// If the provider has a configured key, always use it (local/personal mode).
+	// VIRGIL_LOCAL_APP_TOKEN enables multi-tenant mode: clients authenticate with
+	// a shared local token and Virgil swaps in the real provider key.
+	if providerKeyEnv != "" {
+		if providerKey := router.getenv(providerKeyEnv); providerKey != "" {
+			localToken := router.getenv("VIRGIL_LOCAL_APP_TOKEN")
+			if localToken == "" || subtle.ConstantTimeCompare([]byte(presented), []byte(localToken)) == 1 {
+				return providerKey, true
+			}
 		}
-		providerKey := router.getenv(providerKeyEnv)
-		return providerKey, providerKey != ""
 	}
 	return presented, true
 }

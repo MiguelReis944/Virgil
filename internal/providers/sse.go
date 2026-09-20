@@ -74,6 +74,7 @@ func (a *OpenAICompatible) Stream(ctx context.Context, resp *http.Response, down
 				}
 				frame = frame[:0]
 				if done {
+					result.ResponseText = result.contentBuf.String()
 					return result, nil
 				}
 			}
@@ -126,6 +127,7 @@ func inspectSSEFrame(frame []byte, result *Result) (bool, error) {
 		Choices []struct {
 			Index int `json:"index"`
 			Delta struct {
+				Content   string `json:"content"`
 				ToolCalls []struct {
 					Index    int `json:"index"`
 					Function struct {
@@ -146,6 +148,9 @@ func inspectSSEFrame(frame []byte, result *Result) (bool, error) {
 		result.ResponseModel = chunk.Model
 	}
 	for _, choice := range chunk.Choices {
+		if choice.Delta.Content != "" {
+			result.contentBuf.WriteString(choice.Delta.Content)
+		}
 		for _, call := range choice.Delta.ToolCalls {
 			if err := result.addToolDelta(choice.Index, call.Index, call.Function.Name, call.Function.Arguments); err != nil {
 				return false, err

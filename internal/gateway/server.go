@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/MiguelReis944/Virgil/internal/config"
+	"github.com/MiguelReis944/Virgil/internal/dashboard"
 	"github.com/MiguelReis944/Virgil/internal/policies"
 	"github.com/MiguelReis944/Virgil/internal/storage"
 	"github.com/MiguelReis944/Virgil/internal/telemetry"
@@ -27,13 +28,21 @@ type PostflightRecorder interface {
 	PostflightAndAppend(ctx context.Context, outcome storage.PolicyOutcome, event telemetry.Event, destinations []string, costUSD string) error
 }
 
+// ContentSaver is an optional extension of EventRecorder for persisting
+// raw prompt/response content alongside events. *storage.Journal implements this.
+type ContentSaver interface {
+	SaveContent(ctx context.Context, rec storage.ContentRecord) error
+}
+
 type Dependencies struct {
-	DB             *sql.DB
-	Client         *http.Client
-	Getenv         func(string) string
-	Recorder       EventRecorder
-	InstallationID string
-	Policy         *policies.Engine
+	DB                *sql.DB
+	Client            *http.Client
+	Getenv            func(string) string
+	Recorder          EventRecorder
+	InstallationID    string
+	Policy            *policies.Engine
+	ConfigPath        string // path to virgil.toml; enables GET/POST /setup when set
+	DashboardPassword string // empty = no auth
 }
 
 func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
@@ -60,6 +69,27 @@ func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", router.chat)
 	mux.HandleFunc("POST /v1/tool-results", router.toolResults)
+	if deps.ConfigPath != "" {
+		setupH := newSetupHandler(deps.ConfigPath)
+		mux.HandleFunc("GET /setup", setupH)
+		mux.HandleFunc("POST /setup", setupH)
+	}
+	dashLogin := dashboard.LoginHandler(deps.DashboardPassword)
+	mux.HandleFunc("GET /login", dashLogin)
+	mux.HandleFunc("POST /login", dashLogin)
+	mux.HandleFunc("POST /logout", dashboard.LogoutHandler())
+	mux.Handle("GET /dashboard", dashboard.DashboardHandler(deps.DB, deps.DashboardPassword))
+	mux.Handle("GET /dashboard/run/{runID}", dashboard.RunHandler(deps.DB, deps.DashboardPassword))
+	if cs, ok := deps.Recorder.(dashboard.ContentStore); ok {
+		mux.Handle("GET /dashboard/event/{eventID}", dashboard.EventHandler(deps.DB, cs, deps.DashboardPassword))
+	}
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			http.Redirect(w, r, "/dashboard", http.StatusFound)
+		} else {
+			http.NotFound(w, r)
+		}
+	})
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		status := http.StatusOK
 		body := struct {

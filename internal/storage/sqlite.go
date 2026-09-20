@@ -209,6 +209,43 @@ func (j *Journal) appendTransaction(event telemetry.Event, destinations []string
 	return tx.Commit()
 }
 
+// ContentRecord holds the optional prompt/response content for an event.
+type ContentRecord struct {
+	EventID       string
+	PromptJSON    string
+	ResponseText  string
+	ErrorMessage  string
+	CreatedAtNS   int64
+}
+
+// SaveContent stores prompt/response content for an event. Best-effort: errors are logged, not fatal.
+func (j *Journal) SaveContent(ctx context.Context, rec ContentRecord) error {
+	j.mu.RLock()
+	if j.closed {
+		j.mu.RUnlock()
+		return errors.New("journal is closed")
+	}
+	j.mu.RUnlock()
+	_, err := j.db.ExecContext(ctx,
+		`INSERT OR REPLACE INTO event_content(event_id, prompt_json, response_text, error_message, created_at_unix_ns) VALUES (?,?,?,?,?)`,
+		rec.EventID, rec.PromptJSON, rec.ResponseText, rec.ErrorMessage, rec.CreatedAtNS,
+	)
+	return err
+}
+
+// GetContent retrieves prompt/response content for an event.
+func (j *Journal) GetContent(ctx context.Context, eventID string) (ContentRecord, error) {
+	var rec ContentRecord
+	err := j.readDB.QueryRowContext(ctx,
+		`SELECT event_id, COALESCE(prompt_json,''), COALESCE(response_text,''), COALESCE(error_message,''), created_at_unix_ns FROM event_content WHERE event_id=?`,
+		eventID,
+	).Scan(&rec.EventID, &rec.PromptJSON, &rec.ResponseText, &rec.ErrorMessage, &rec.CreatedAtNS)
+	if err != nil {
+		return ContentRecord{}, err
+	}
+	return rec, nil
+}
+
 func (j *Journal) Get(ctx context.Context, eventID string) (telemetry.Event, error) {
 	var encoded []byte
 	if err := j.readDB.QueryRowContext(ctx, "SELECT payload FROM events WHERE event_id=?", eventID).Scan(&encoded); err != nil {

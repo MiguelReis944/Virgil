@@ -37,6 +37,10 @@ enabled = false
 # credential_path = "./data/controlplane.credential"
 # allowed_fields = ["provider", "requested_model", "input_tokens", "output_tokens", "actual_cost", "latency_ms", "status", "created_at"]
 
+# Dashboard web — leave password empty for no auth (local-only use)
+# [dashboard]
+# password = "${VIRGIL_DASHBOARD_PASSWORD}"
+
 # Configure only providers you use. Model names and endpoints are local choices.
 # Omit capabilities to allow the adapter's supported subset; an explicit list
 # can disable streaming or tool use before any provider request is sent.

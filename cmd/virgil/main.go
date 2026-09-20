@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/MiguelReis944/Virgil/internal/config"
@@ -45,12 +46,15 @@ func run(args []string) error {
 	}
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	configPath := flags.String("config", "virgil.toml", "path to TOML configuration (default: virgil.toml in current directory)")
+	envFile := flags.String("env", ".env", "path to .env file (loaded before config; ignored if missing)")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
+	loadDotEnv(*envFile)
 	cfg, err := config.Load(*configPath, os.Getenv)
 	if err != nil {
-		return err
+		slog.Warn("config invalid or missing; starting setup server", "reason", err, "url", "http://127.0.0.1:8787/setup")
+		return runSetupServer(*configPath)
 	}
 	level := slog.LevelInfo
 	switch cfg.Server.LogLevel {
@@ -72,7 +76,7 @@ func run(args []string) error {
 		return err
 	}
 	defer readDB.Close()
-	handler, journal, engine, err := buildHandlerWithEngine(cfg, db, readDB)
+	handler, journal, engine, err := buildHandlerWithEngine(cfg, *configPath, db, readDB)
 	if err != nil {
 		return err
 	}
@@ -101,6 +105,47 @@ func run(args []string) error {
 	}
 	slog.Info("gateway listening", "address", cfg.Server.Listen)
 	return gateway.ListenAndServe(ctx, cfg.Server.Listen, handler)
+}
+
+// loadDotEnv reads KEY=VALUE pairs from path and sets them via os.Setenv.
+// Lines starting with # and empty lines are ignored. Already-set variables
+// are not overwritten (same behaviour as dotenv tools).
+func loadDotEnv(path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return // file missing is fine
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		v = strings.Trim(strings.TrimSpace(v), `"'`)
+		if k != "" && os.Getenv(k) == "" {
+			os.Setenv(k, v)
+		}
+	}
+	slog.Info("loaded .env", "path", path)
+}
+
+func runSetupServer(configPath string) error {
+	mux := http.NewServeMux()
+	setupH := gateway.NewSetupHandler(configPath)
+	mux.HandleFunc("GET /setup", setupH)
+	mux.HandleFunc("POST /setup", setupH)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/setup", http.StatusFound)
+	})
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	const addr = "127.0.0.1:8787"
+	slog.Info("setup server listening", "address", addr)
+	return gateway.ListenAndServe(ctx, addr, mux)
 }
 
 func runEvents(args []string) error {
@@ -165,11 +210,11 @@ func splitFields(s string) []string {
 }
 
 func buildHandler(cfg config.Config, db *sql.DB) (http.Handler, *storage.Journal, error) {
-	handler, journal, _, err := buildHandlerWithEngine(cfg, db, nil)
+	handler, journal, _, err := buildHandlerWithEngine(cfg, "", db, nil)
 	return handler, journal, err
 }
 
-func buildHandlerWithEngine(cfg config.Config, db, readDB *sql.DB) (http.Handler, *storage.Journal, *policies.Engine, error) {
+func buildHandlerWithEngine(cfg config.Config, configPath string, db, readDB *sql.DB) (http.Handler, *storage.Journal, *policies.Engine, error) {
 	journal, err := storage.NewJournalWithReadPool(db, readDB)
 	if err != nil {
 		return nil, nil, nil, err
@@ -199,6 +244,8 @@ func buildHandlerWithEngine(cfg config.Config, db, readDB *sql.DB) (http.Handler
 	handler, err := gateway.NewServer(cfg, gateway.Dependencies{
 		DB: db, Getenv: os.Getenv,
 		Recorder: recorder, InstallationID: journal.InstallationID(), Policy: engine,
+		ConfigPath:        configPath,
+		DashboardPassword: cfg.Dashboard.Password,
 	})
 	if err != nil {
 		journal.Close()

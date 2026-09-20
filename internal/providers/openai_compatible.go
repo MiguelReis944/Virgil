@@ -163,6 +163,7 @@ func (a *OpenAICompatible) Translate(resp *http.Response, downstream http.Respon
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		code := fmt.Sprintf("provider_http_%d", resp.StatusCode)
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		downstream.Header().Set("Content-Type", "application/json")
 		downstream.WriteHeader(resp.StatusCode)
 		_ = json.NewEncoder(downstream).Encode(map[string]any{
@@ -172,7 +173,7 @@ func (a *OpenAICompatible) Translate(resp *http.Response, downstream http.Respon
 				"code":    code,
 			},
 		})
-		return Result{ErrorCode: code, Status: "provider_error", UsageSource: "unknown"}, nil
+		return Result{ErrorCode: code, Status: "provider_error", UsageSource: "unknown", ErrorBody: string(errBody)}, nil
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxProviderResponse+1))
 	if err != nil {
@@ -186,6 +187,7 @@ func (a *OpenAICompatible) Translate(resp *http.Response, downstream http.Respon
 		Usage   *openaiUsage `json:"usage"`
 		Choices []struct {
 			Message struct {
+				Content   string `json:"content"`
 				ToolCalls []struct {
 					Function struct {
 						Name      string `json:"name"`
@@ -200,6 +202,9 @@ func (a *OpenAICompatible) Translate(resp *http.Response, downstream http.Respon
 	}
 	result := Result{ResponseModel: parsed.Model, Status: "success", UsageSource: "unknown"}
 	for _, choice := range parsed.Choices {
+		if choice.Message.Content != "" {
+			result.ResponseText = choice.Message.Content
+		}
 		for _, call := range choice.Message.ToolCalls {
 			fingerprint := newToolStreamFingerprint()
 			fingerprint.add(call.Function.Name, call.Function.Arguments)

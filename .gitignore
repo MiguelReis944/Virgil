@@ -1,3 +1,4 @@
+.env
 /data/
 /dist/
 /virgil.exe
@@ -9,3 +10,4 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 *.egg-info/
+virgil.toml
