@@ -79,6 +79,7 @@ func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
 	mux.HandleFunc("POST /login", dashLogin)
 	mux.HandleFunc("POST /logout", dashboard.LogoutHandler())
 	mux.Handle("GET /dashboard", dashboard.DashboardHandler(deps.DB, deps.DashboardPassword))
+	mux.Handle("GET /dashboard/session/{bucketTS}", dashboard.SessionHandler(deps.DB, deps.DashboardPassword))
 	mux.Handle("GET /dashboard/run/{runID}", dashboard.RunHandler(deps.DB, deps.DashboardPassword))
 	if cs, ok := deps.Recorder.(dashboard.ContentStore); ok {
 		mux.Handle("GET /dashboard/event/{eventID}", dashboard.EventHandler(deps.DB, cs, deps.DashboardPassword))
