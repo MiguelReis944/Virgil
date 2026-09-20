@@ -168,7 +168,7 @@ func QueryHourlySeries(ctx context.Context, db *sql.DB, hours int) ([]HourPoint,
 	since := time.Now().Add(-time.Duration(hours) * time.Hour)
 	const q = `
 SELECT
-    strftime('%H:00', datetime(created_at_unix_ns / 1000000000, 'unixepoch')) AS hour_label,
+    strftime('%H:00', datetime(created_at_unix_ns / 1000000000, 'unixepoch', 'localtime')) AS hour_label,
     SUM(` + costExpr + `)                                                       AS cost,
     COUNT(*)                                                                    AS calls,
     SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END)                       AS errors,

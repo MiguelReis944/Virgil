@@ -222,8 +222,16 @@ const dashboardHTML = `<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>` + sharedCSS + `</style>
 <script>
-// Auto-refresh every 15s; pause when the user is interacting with filters
+// Auto-refresh every 15s; cancel when filters are active or user is typing
 (function(){
+  var params = new URLSearchParams(location.search);
+  var hasFilter = params.get('model') || params.get('provider') || params.get('status') ||
+                  params.get('min_lat') || params.get('max_lat');
+  if (hasFilter) {
+    var dot = document.getElementById('refresh-dot');
+    if (dot) dot.style.opacity = '0.3';
+    return;
+  }
   var t = setTimeout(function(){ location.reload(); }, 15000);
   document.addEventListener('focusin', function(){ clearTimeout(t); });
 })();
@@ -458,7 +466,9 @@ const dashboardHTML = `<!DOCTYPE html>
           <text class="yax" x="43" y="18" text-anchor="end">{{fmtMs .HMaxLatMS}}</text>
           <text class="yax" x="43" y="55" text-anchor="end">{{halfMs .HMaxLatMS}}</text>
           <text class="yax" x="43" y="95" text-anchor="end">0</text>
+          {{if gt (len .HourlySeries) 1}}
           <polygon fill="url(#latGrad)" points="{{latLine .HourlySeries}} {{(index .HourlySeries (sub1 (len .HourlySeries))).BarCX}},95 {{(index .HourlySeries 0).BarCX}},95"/>
+          {{end}}
           <polyline fill="none" stroke="rgba(168,85,247,.9)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"
                     points="{{latLine .HourlySeries}}"/>
           {{range .HourlySeries}}
@@ -1127,7 +1137,7 @@ var dashTmpl = template.Must(template.New("dash").Funcs(template.FuncMap{
 	"inTokBarY": func(h int) int { return chartBase - h },
 	"outTokBarY":func(h int) int { return chartBase - h },
 	// token out bar x = cx (in is left half, out right half)
-	"tokOutX": func(cx, bw int) int { return cx + bw/2 + 1 },
+	"tokOutX": func(cx, bw int) int { return cx },
 	// half-bar width
 	"halfW": func(bw int) int { return bw/2 - 1 },
 	// line chart helpers

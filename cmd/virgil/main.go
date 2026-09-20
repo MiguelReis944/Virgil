@@ -103,6 +103,9 @@ func run(args []string) error {
 		}()
 		defer func() { stop(); <-done }()
 	}
+	if cfg.Dashboard.Password == "" {
+		slog.Warn("dashboard has no password — accessible to anyone on this machine; set [dashboard] password in virgil.toml")
+	}
 	slog.Info("gateway listening", "address", cfg.Server.Listen)
 	return gateway.ListenAndServe(ctx, cfg.Server.Listen, handler)
 }

@@ -421,6 +421,21 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
+// listModels handles GET /v1/models — returns the models configured in this gateway.
+func (router *router) listModels(w http.ResponseWriter, _ *http.Request) {
+	type modelObj struct {
+		ID      string `json:"id"`
+		Object  string `json:"object"`
+		OwnedBy string `json:"owned_by"`
+	}
+	data := make([]modelObj, 0, len(router.models))
+	for id, r := range router.models {
+		data = append(data, modelObj{ID: id, Object: "model", OwnedBy: r.provider})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": data})
+}
+
 func writePolicyBlock(w http.ResponseWriter, decision policies.Decision) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)

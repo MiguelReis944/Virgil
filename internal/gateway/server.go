@@ -69,6 +69,7 @@ func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", router.chat)
 	mux.HandleFunc("POST /v1/tool-results", router.toolResults)
+	mux.HandleFunc("GET /v1/models", router.listModels)
 	if deps.ConfigPath != "" {
 		setupH := newSetupHandler(deps.ConfigPath)
 		mux.HandleFunc("GET /setup", setupH)
