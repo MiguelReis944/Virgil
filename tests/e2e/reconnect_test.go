@@ -1,4 +1,4 @@
-package e2e
+﻿package e2e
 
 import (
 	"context"
@@ -25,7 +25,7 @@ func TestReconnectDelivery(t *testing.T) {
 	defer upstream.Close()
 
 	cfg := config.Config{Providers: map[string]config.ProviderConfig{
-		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model"},
+		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Local: true},
 	}}
 	handler, journal := openGateway(t, cfg)
 
@@ -83,7 +83,7 @@ func TestReconnectDelivery(t *testing.T) {
 	}))
 	defer cpServer.Close()
 
-	// Drain the outbox to the CP — simulating reconnection.
+	// Drain the outbox to the CP â€” simulating reconnection.
 	cpClient := controlplane.NewClient(cpServer.URL, "cred_reconnect", nil)
 	n, err := export.DrainControlPlane(context.Background(), journal, dest, cpClient, []string{"event_id", "provider"}, 10)
 	if err != nil {
@@ -116,7 +116,7 @@ func TestTracePreservation(t *testing.T) {
 	defer upstream.Close()
 
 	cfg := config.Config{Providers: map[string]config.ProviderConfig{
-		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model"},
+		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Local: true},
 	}}
 	handler, journal := openGateway(t, cfg)
 

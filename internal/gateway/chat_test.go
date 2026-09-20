@@ -1,4 +1,4 @@
-package gateway
+﻿package gateway
 
 import (
 	"bytes"
@@ -49,7 +49,7 @@ func TestPolicyBlockDoesNotCallProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.Config{Providers: map[string]config.ProviderConfig{
-		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model"},
+		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Local: true},
 	}}
 	handler, err := NewServer(cfg, Dependencies{DB: db, Client: http.DefaultClient, Recorder: journal, InstallationID: journal.InstallationID(), Policy: engine})
 	if err != nil {
@@ -104,7 +104,7 @@ func TestCostUnavailableBlocksAndJournals(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.Config{Providers: map[string]config.ProviderConfig{
-		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model"},
+		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Local: true},
 	}}
 	handler, err := NewServer(cfg, Dependencies{DB: db, Recorder: journal, InstallationID: journal.InstallationID(), Policy: engine})
 	if err != nil {
@@ -149,7 +149,7 @@ func TestActualCostReconcilesBeforeNextRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.Config{
-		Providers:  map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model"}},
+		Providers:  map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Local: true}},
 		Guardrails: config.GuardrailsConfig{EstimatedCostPerCallUSD: "0.10"},
 		Pricing:    config.PricingConfig{Version: "test", Currency: "USD", Models: map[string]config.ModelPriceEntry{"fixture-model": {InputPerToken: "0.10", OutputPerToken: "0"}}},
 	}
@@ -184,7 +184,7 @@ func chatServer(t *testing.T, upstreamURL string, getenv func(string) string) ht
 	t.Cleanup(func() { db.Close() })
 	cfg := config.Config{
 		Providers: map[string]config.ProviderConfig{
-			"fixture": {Type: "openai-compatible", BaseURL: upstreamURL + "/v1", Model: "fixture-model", APIKeyEnv: "TEST_PROVIDER_KEY"},
+			"fixture": {Type: "openai-compatible", BaseURL: upstreamURL + "/v1", Model: "fixture-model", APIKeyEnv: "TEST_PROVIDER_KEY", Local: true},
 		},
 	}
 	handler, err := NewServer(cfg, Dependencies{DB: db, Client: http.DefaultClient, Getenv: getenv})
@@ -290,7 +290,7 @@ func TestConfiguredCapabilityRejectsBeforeDispatch(t *testing.T) {
 	}
 	defer db.Close()
 	cfg := config.Config{Providers: map[string]config.ProviderConfig{
-		"kimi": {Type: "kimi", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Capabilities: []string{}},
+		"kimi": {Type: "kimi", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Capabilities: []string{}, Local: true},
 	}}
 	handler, err := NewServer(cfg, Dependencies{DB: db})
 	if err != nil {
@@ -326,7 +326,7 @@ func TestKimiConfiguredEndpointAndModel(t *testing.T) {
 	}
 	defer db.Close()
 	cfg := config.Config{Providers: map[string]config.ProviderConfig{
-		"kimi": {Type: "kimi", BaseURL: upstream.URL + "/v1", Model: "kimi-test-model"},
+		"kimi": {Type: "kimi", BaseURL: upstream.URL + "/v1", Model: "kimi-test-model", Local: true},
 	}}
 	handler, err := NewServer(cfg, Dependencies{DB: db})
 	if err != nil {
@@ -370,7 +370,7 @@ func TestAnthropicConfiguredRouteJSON(t *testing.T) {
 	}
 	defer db.Close()
 	cfg := config.Config{Providers: map[string]config.ProviderConfig{
-		"anthropic": {Type: "anthropic", BaseURL: upstream.URL + "/v1", Model: "fixture-model"},
+		"anthropic": {Type: "anthropic", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Local: true},
 	}}
 	handler, err := NewServer(cfg, Dependencies{DB: db})
 	if err != nil {

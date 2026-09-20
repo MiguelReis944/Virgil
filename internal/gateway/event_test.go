@@ -1,4 +1,4 @@
-package gateway
+﻿package gateway
 
 import (
 	"bytes"
@@ -35,7 +35,7 @@ func TestGatewayRecordsOneEventAndPreservesTrace(t *testing.T) {
 	defer db.Close()
 	recorder := &captureEvents{}
 	cfg := config.Config{Providers: map[string]config.ProviderConfig{
-		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model"},
+		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Local: true},
 	}}
 	handler, err := NewServer(cfg, Dependencies{DB: db, Client: http.DefaultClient, Getenv: func(string) string { return "" }, Recorder: recorder, InstallationID: "install_fixture"})
 	if err != nil {

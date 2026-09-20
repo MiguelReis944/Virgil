@@ -1,4 +1,4 @@
-package privacy
+﻿package privacy
 
 import (
 	"bytes"
@@ -61,7 +61,7 @@ func TestCanariesStayOutOfSQLiteLogsAndExport(t *testing.T) {
 	}
 	defer journal.Close()
 	cfg := config.Config{Providers: map[string]config.ProviderConfig{
-		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model"},
+		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Local: true},
 	}}
 	handler, err := gateway.NewServer(cfg, gateway.Dependencies{
 		DB: db, Client: http.DefaultClient, Recorder: journal,

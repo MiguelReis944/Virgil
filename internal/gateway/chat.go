@@ -38,6 +38,7 @@ type router struct {
 	policy         *policies.Engine
 	guardrails     config.GuardrailsConfig
 	pricingCfg     config.PricingConfig
+	priceRegistry  *pricing.Registry
 }
 
 // sharedTransport is optimised for many concurrent calls to the same upstream
@@ -57,7 +58,18 @@ func newRouter(cfg config.Config, client *http.Client, getenv func(string) strin
 	if getenv == nil {
 		getenv = func(string) string { return "" }
 	}
-	r := &router{models: make(map[string]route), getenv: getenv, guardrails: cfg.Guardrails, pricingCfg: cfg.Pricing}
+	// Build price registry from config for provider:model lookups.
+	var priceSources []pricing.ModelPriceSource
+	for model, entry := range cfg.Pricing.Models {
+		priceSources = append(priceSources, pricing.ModelPriceSource{
+			Model:          model,
+			InputPerToken:  entry.InputPerToken,
+			OutputPerToken: entry.OutputPerToken,
+			CachedPerToken: entry.CachedPerToken,
+		})
+	}
+	priceReg := pricing.NewPriceRegistryFromEntries(priceSources)
+	r := &router{models: make(map[string]route), getenv: getenv, guardrails: cfg.Guardrails, pricingCfg: cfg.Pricing, priceRegistry: priceReg}
 	registry, err := providers.NewRegistry(cfg, client)
 	if err != nil {
 		return nil, err
@@ -181,6 +193,21 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 			if c, err := pricing.Calculate(u, table); err == nil {
 				actualCost, estimatedCost = c.ActualCost, c.EstimatedCost
 				pricingVersion, costCurrency = router.pricingCfg.Version, router.pricingCfg.Currency
+			}
+		} else if router.priceRegistry != nil {
+			// Fall back to the price registry for provider:model lookups.
+			if pe, ok := router.priceRegistry.Lookup(selected.provider, result.ResponseModel); ok && pe.InputPerToken != "" {
+				table := pricing.Table{
+					Version:        router.pricingCfg.Version,
+					Currency:       router.pricingCfg.Currency,
+					InputPerToken:  pe.InputPerToken,
+					OutputPerToken: pe.OutputPerToken,
+					CachedPerToken: pe.CachedPerToken,
+				}
+				if c, err := pricing.Calculate(u, table); err == nil {
+					actualCost, estimatedCost = c.ActualCost, c.EstimatedCost
+					pricingVersion, costCurrency = router.pricingCfg.Version, router.pricingCfg.Currency
+				}
 			}
 		}
 		if router.policy != nil && reservationID != "" && len(result.ToolCallFingerprints) > 0 {

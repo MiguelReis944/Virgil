@@ -10,7 +10,7 @@ func TestRegistryUsesConfiguredProviderTypes(t *testing.T) {
 	registry, err := NewRegistry(config.Config{Providers: map[string]config.ProviderConfig{
 		"openai": {Type: "openai", BaseURL: "https://example.invalid/v1", Model: "openai-model"},
 		"kimi":   {Type: "kimi", BaseURL: "https://example.invalid/v1", Model: "kimi-model", Capabilities: []string{"stream"}},
-		"custom": {Type: "openai-compatible", BaseURL: "http://127.0.0.1:1/v1", Model: "custom-model"},
+		"custom": {Type: "openai-compatible", BaseURL: "https://example.invalid/v1", Model: "custom-model"},
 	}}, nil)
 	// 3 providers × 2 keys each (plain + composite) = 6 entries.
 	if err != nil || len(registry) != 6 || registry["kimi-model"].Provider != "kimi" {

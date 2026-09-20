@@ -83,6 +83,9 @@ type ProviderConfig struct {
 	APIKey       string   `toml:"api_key"`
 	APIKeyEnv    string   `toml:"-"`
 	Capabilities []string `toml:"capabilities"`
+	// Local marks the provider as explicitly local (e.g. Ollama on 127.0.0.1).
+	// When true, SSRF validation is skipped. Only loopback base_url values are permitted.
+	Local bool `toml:"local"`
 }
 
 var envReference = regexp.MustCompile(`^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$`)

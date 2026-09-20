@@ -3,9 +3,11 @@ package providers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 
 	"github.com/MiguelReis944/Virgil/internal/config"
 )
@@ -30,6 +32,9 @@ func NewRegistry(cfg config.Config, client *http.Client) (Registry, error) {
 		modelCount[provider.Model]++
 	}
 	for name, provider := range cfg.Providers {
+		if strings.Contains(name, ":") {
+			return nil, fmt.Errorf("provider name must not contain ':' (got %q)", name)
+		}
 		for _, capability := range provider.Capabilities {
 			if capability != "stream" && capability != "tools" {
 				return nil, errors.New("unsupported provider capability")
@@ -41,6 +46,11 @@ func NewRegistry(cfg config.Config, client *http.Client) (Registry, error) {
 		base, err := url.Parse(provider.BaseURL)
 		if err != nil || base.Host == "" || base.User != nil || (base.Scheme != "http" && base.Scheme != "https") {
 			return nil, errors.New("invalid provider base URL")
+		}
+		if !provider.Local {
+			if err := validateBaseURL(provider.BaseURL); err != nil {
+				return nil, fmt.Errorf("provider %s: %w", name, err)
+			}
 		}
 		var adapter Adapter
 		switch provider.Type {

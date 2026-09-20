@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"context"
@@ -29,7 +29,7 @@ func TestLocalGatewayWiresDurableJournal(t *testing.T) {
 	}
 	defer db.Close()
 	cfg := config.Config{Providers: map[string]config.ProviderConfig{
-		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model"},
+		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Local: true},
 	}}
 	handler, journal, err := buildHandler(cfg, db)
 	if err != nil {
@@ -64,7 +64,7 @@ func TestControlPlaneModeQueuesEvents(t *testing.T) {
 	}
 	defer db.Close()
 	cfg := config.Config{ControlPlane: config.ControlPlaneConfig{Enabled: true}, Providers: map[string]config.ProviderConfig{
-		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model"},
+		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Local: true},
 	}}
 	handler, journal, err := buildHandler(cfg, db)
 	if err != nil {

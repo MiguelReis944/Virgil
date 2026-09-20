@@ -1,4 +1,4 @@
-package gateway
+﻿package gateway
 
 import (
 	"bytes"
@@ -32,7 +32,7 @@ func toolResultServer(t *testing.T, token, upstreamURL string) (http.Handler, *s
 		t.Fatal(err)
 	}
 	cfg := config.Config{Providers: map[string]config.ProviderConfig{
-		"fixture": {Type: "openai-compatible", BaseURL: upstreamURL + "/v1", Model: "fixture-model"},
+		"fixture": {Type: "openai-compatible", BaseURL: upstreamURL + "/v1", Model: "fixture-model", Local: true},
 	}}
 	handler, err := NewServer(cfg, Dependencies{
 		DB: db, Recorder: journal, InstallationID: journal.InstallationID(), Policy: engine,

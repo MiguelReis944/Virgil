@@ -1,4 +1,4 @@
-// Package e2e proves end-to-end gateway behaviour without any external service.
+﻿// Package e2e proves end-to-end gateway behaviour without any external service.
 // All upstreams are fake HTTP servers; no real provider or Control Plane is used.
 package e2e
 
@@ -100,7 +100,7 @@ func TestJSONForwarding(t *testing.T) {
 	defer upstream.Close()
 
 	cfg := config.Config{Providers: map[string]config.ProviderConfig{
-		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model"},
+		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Local: true},
 	}}
 	handler, _ := openGateway(t, cfg)
 
@@ -131,7 +131,7 @@ func TestSSEStreaming(t *testing.T) {
 	defer upstream.Close()
 
 	cfg := config.Config{Providers: map[string]config.ProviderConfig{
-		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model"},
+		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Local: true},
 	}}
 	handler, _ := openGateway(t, cfg)
 
@@ -176,7 +176,7 @@ func TestKimiByConfig(t *testing.T) {
 	cfg := config.Config{Providers: map[string]config.ProviderConfig{
 		// Provider configured with a specific model alias; the gateway routes
 		// any request with model="kimi-k2" here via the alias.
-		"moonshot": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "kimi-k2"},
+		"moonshot": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "kimi-k2", Local: true},
 	}}
 	handler, _ := openGateway(t, cfg)
 
@@ -204,7 +204,7 @@ func TestOfflineRecording(t *testing.T) {
 	defer upstream.Close()
 
 	cfg := config.Config{Providers: map[string]config.ProviderConfig{
-		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model"},
+		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Local: true},
 	}}
 	handler, journal := openGateway(t, cfg)
 
@@ -240,7 +240,7 @@ func TestPrivacyContentAbsent(t *testing.T) {
 	defer upstream.Close()
 
 	cfg := config.Config{Providers: map[string]config.ProviderConfig{
-		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model"},
+		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Local: true},
 	}}
 	handler, journal := openGateway(t, cfg)
 
@@ -285,7 +285,7 @@ func TestThreeErrorBlocking(t *testing.T) {
 	defer upstream.Close()
 
 	cfg := config.Config{Providers: map[string]config.ProviderConfig{
-		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model"},
+		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Local: true},
 	}}
 	engine, err := policies.NewEngine(mustOpenJournal(t), policies.Limits{MaxCallsPerRun: 100})
 	if err != nil {
@@ -329,7 +329,7 @@ func TestThreeErrorBlocking(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusForbidden && rec.Code != http.StatusTooManyRequests {
-		// If policy is not enforced, the request passes through — skip instead of hard fail
+		// If policy is not enforced, the request passes through â€” skip instead of hard fail
 		// since the exact status code depends on the policy engine integration.
 		t.Logf("note: blocking not enforced for run %s (status=%d); policy engine may need run_id wiring", runID, rec.Code)
 	}
