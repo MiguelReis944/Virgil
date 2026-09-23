@@ -121,6 +121,11 @@ func ListenAndServe(ctx context.Context, address string, handler http.Handler) e
 	if err != nil {
 		return err
 	}
+	return Serve(ctx, listener, handler)
+}
+
+// Serve serves an already-bound listener until the context is canceled.
+func Serve(ctx context.Context, listener net.Listener, handler http.Handler) error {
 	return serve(ctx, listener, handler)
 }
 

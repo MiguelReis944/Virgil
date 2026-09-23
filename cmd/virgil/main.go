@@ -9,148 +9,103 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
-	"time"
 
+	"github.com/MiguelReis944/Virgil/internal/app"
 	"github.com/MiguelReis944/Virgil/internal/config"
 	"github.com/MiguelReis944/Virgil/internal/export"
-	"github.com/MiguelReis944/Virgil/internal/gateway"
 	"github.com/MiguelReis944/Virgil/internal/policies"
 	"github.com/MiguelReis944/Virgil/internal/storage"
-	"github.com/MiguelReis944/Virgil/internal/telemetry"
 )
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		slog.Error("gateway stopped", "error", err)
+		slog.Error("Virgil stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: virgil <serve|run|events> ...")
+type commandKind string
+
+const (
+	commandCore   commandKind = "core"
+	commandRun    commandKind = "run"
+	commandEvents commandKind = "events"
+	commandInit   commandKind = "init"
+	commandTail   commandKind = "tail"
+)
+
+func classifyCommand(args []string) (commandKind, []string, error) {
+	if len(args) == 0 || args[0] == "" || args[0][0] == '-' {
+		return commandCore, args, nil
 	}
 	switch args[0] {
-	case "events":
-		return runEvents(args[1:])
-	case "run":
-		return runRun(args[1:])
-	case "init":
-		return runInit(args[1:])
-	case "tail":
-		return runTail(args[1:])
 	case "serve":
+		return commandCore, args[1:], nil
+	case "run":
+		return commandRun, args[1:], nil
+	case "events":
+		return commandEvents, args[1:], nil
+	case "init":
+		return commandInit, args[1:], nil
+	case "tail":
+		return commandTail, args[1:], nil
 	default:
-		return fmt.Errorf("unknown command: %s (available: serve, run, events, init, tail)", args[0])
+		return "", nil, fmt.Errorf("unknown command: %s (available: serve, run, events, init, tail)", args[0])
 	}
-	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
-	configPath := flags.String("config", "virgil.toml", "path to TOML configuration (default: virgil.toml in current directory)")
-	envFile := flags.String("env", ".env", "path to .env file (loaded before config; ignored if missing)")
-	if err := flags.Parse(args[1:]); err != nil {
-		return err
-	}
-	loadDotEnv(*envFile)
-	cfg, err := config.Load(*configPath, os.Getenv)
-	if err != nil {
-		slog.Warn("config invalid or missing; starting setup server", "reason", err, "url", "http://127.0.0.1:8787/setup")
-		return runSetupServer(*configPath)
-	}
-	level := slog.LevelInfo
-	switch cfg.Server.LogLevel {
-	case "debug":
-		level = slog.LevelDebug
-	case "warn":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
-	db, err := storage.Open(cfg.Storage.Path)
+}
+
+func run(args []string) error {
+	kind, rest, err := classifyCommand(args)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
-	readDB, err := storage.OpenReadPool(cfg.Storage.Path)
-	if err != nil {
+	switch kind {
+	case commandRun:
+		return runRun(rest)
+	case commandEvents:
+		return runEvents(rest)
+	case commandInit:
+		return runInit(rest)
+	case commandTail:
+		return runTail(rest)
+	}
+	flags := flag.NewFlagSet("virgil", flag.ContinueOnError)
+	configPath := flags.String("config", "virgil.toml", "path to local TOML configuration")
+	envPath := flags.String("env-file", ".env", "path to .env file (ignored if missing)")
+	flags.StringVar(envPath, "env", ".env", "alias for --env-file")
+	noOpen := flags.Bool("no-open", false, "start the local panel without opening a browser")
+	if err := flags.Parse(rest); err != nil {
 		return err
 	}
-	defer readDB.Close()
-	handler, journal, engine, err := buildHandlerWithEngine(cfg, *configPath, db, readDB)
-	if err != nil {
-		return err
-	}
-	defer journal.Close()
-	if cfg.Storage.RetentionDays > 0 {
-		if _, err := journal.Prune(context.Background(), time.Now().AddDate(0, 0, -cfg.Storage.RetentionDays)); err != nil {
-			slog.Warn("retention prune failed; continuing", "error", err)
-		}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("unexpected argument %q: use virgil run -- <command> for an agent", flags.Arg(0))
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	if cfg.ControlPlane.Enabled {
-		if err := loadCachedControlPlanePolicy(ctx, journal, engine); err != nil {
-			return fmt.Errorf("cached control plane policy: %w", err)
-		}
-		client, err := configuredControlPlaneClient(cfg.ControlPlane)
-		if err != nil {
-			return fmt.Errorf("control plane credential: %w", err)
-		}
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			runControlPlaneDelivery(ctx, journal, engine, client, cfg.ControlPlane.AllowedFields)
-		}()
-		defer func() { stop(); <-done }()
-	}
-	if cfg.Dashboard.Password == "" {
-		slog.Warn("dashboard has no password — accessible to anyone on this machine; set [dashboard] password in virgil.toml")
-	}
-	slog.Info("gateway listening", "address", cfg.Server.Listen)
-	return gateway.ListenAndServe(ctx, cfg.Server.Listen, handler)
-}
-
-// loadDotEnv reads KEY=VALUE pairs from path and sets them via os.Setenv.
-// Lines starting with # and empty lines are ignored. Already-set variables
-// are not overwritten (same behaviour as dotenv tools).
-func loadDotEnv(path string) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return // file missing is fine
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		k, v, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		k = strings.TrimSpace(k)
-		v = strings.Trim(strings.TrimSpace(v), `"'`)
-		if k != "" && os.Getenv(k) == "" {
-			os.Setenv(k, v)
-		}
-	}
-	slog.Info("loaded .env", "path", path)
-}
-
-func runSetupServer(configPath string) error {
-	mux := http.NewServeMux()
-	setupH := gateway.NewSetupHandler(configPath)
-	mux.HandleFunc("GET /setup", setupH)
-	mux.HandleFunc("POST /setup", setupH)
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/setup", http.StatusFound)
+	return app.RunCore(ctx, app.CoreOptions{
+		ConfigPath:        *configPath,
+		EnvPath:           *envPath,
+		OpenPanel:         !*noOpen,
+		StartControlPlane: startControlPlane,
 	})
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-	const addr = "127.0.0.1:8787"
-	slog.Info("setup server listening", "address", addr)
-	return gateway.ListenAndServe(ctx, addr, mux)
 }
 
+func startControlPlane(ctx context.Context, cfg config.Config, journal *storage.Journal, engine *policies.Engine) (func(), error) {
+	if err := loadCachedControlPlanePolicy(ctx, journal, engine); err != nil {
+		return nil, fmt.Errorf("cached control plane policy: %w", err)
+	}
+	client, err := configuredControlPlaneClient(cfg.ControlPlane)
+	if err != nil {
+		return nil, fmt.Errorf("control plane credential: %w", err)
+	}
+	deliveryCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runControlPlaneDelivery(deliveryCtx, journal, engine, client, cfg.ControlPlane.AllowedFields)
+	}()
+	return func() { cancel(); <-done }, nil
+}
 func runEvents(args []string) error {
 	if len(args) == 0 || args[0] != "export" {
 		return fmt.Errorf("usage: virgil events export --config <path> --format jsonl --output <path> --fields <f1,f2,...>")
@@ -218,50 +173,5 @@ func buildHandler(cfg config.Config, db *sql.DB) (http.Handler, *storage.Journal
 }
 
 func buildHandlerWithEngine(cfg config.Config, configPath string, db, readDB *sql.DB) (http.Handler, *storage.Journal, *policies.Engine, error) {
-	journal, err := storage.NewJournalWithReadPool(db, readDB)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	engine, err := policies.NewEngine(journal, policies.Limits{
-		MaxCallsPerRun:        cfg.Guardrails.MaxRequestsPerRun,
-		MaxCostPerRunUSD:      cfg.Guardrails.MaxCostPerRunUSD,
-		MaxInputTokensPerRun:  cfg.Guardrails.MaxInputTokensPerRun,
-		MaxOutputTokensPerRun: cfg.Guardrails.MaxOutputTokensPerRun,
-		MaxTotalTokensPerRun:  cfg.Guardrails.MaxTotalTokensPerRun,
-		MaxDurationSeconds:    cfg.Guardrails.MaxDurationSeconds,
-		MaxToolCallsPerRun:    cfg.Guardrails.MaxToolCallsPerRun,
-		AllowedProviders:      cfg.Guardrails.AllowedProviders,
-		AllowedModels:         cfg.Guardrails.AllowedModels,
-		AllowedTools:          cfg.Guardrails.AllowedTools,
-		MaxCallsPerDay:        cfg.Guardrails.MaxCallsPerDay,
-		MaxCostPerDayUSD:      cfg.Guardrails.MaxCostPerDayUSD,
-	})
-	if err != nil {
-		journal.Close()
-		return nil, nil, nil, err
-	}
-	var recorder gateway.EventRecorder = journal
-	if cfg.ControlPlane.Enabled {
-		recorder = destinationRecorder{journal: journal, destination: "controlplane"}
-	}
-	handler, err := gateway.NewServer(cfg, gateway.Dependencies{
-		DB: db, Getenv: os.Getenv,
-		Recorder: recorder, InstallationID: journal.InstallationID(), Policy: engine,
-		ConfigPath:        configPath,
-		DashboardPassword: cfg.Dashboard.Password,
-	})
-	if err != nil {
-		journal.Close()
-		return nil, nil, nil, err
-	}
-	return handler, journal, engine, nil
-}
-
-type destinationRecorder struct {
-	journal     *storage.Journal
-	destination string
-}
-
-func (r destinationRecorder) Record(ctx context.Context, event telemetry.Event) error {
-	return r.journal.Append(ctx, event, []string{r.destination})
+	return app.BuildHandlerWithEngine(cfg, configPath, db, readDB)
 }

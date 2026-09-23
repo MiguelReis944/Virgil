@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"context"
@@ -15,6 +15,39 @@ import (
 	"github.com/MiguelReis944/Virgil/internal/storage"
 	"github.com/MiguelReis944/Virgil/internal/telemetry"
 )
+
+func TestClassifyCommand(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		kind    commandKind
+		rest    []string
+		wantErr string
+	}{
+		{name: "default", kind: commandCore},
+		{name: "default with flags", args: []string{"--config", "other.toml"}, kind: commandCore, rest: []string{"--config", "other.toml"}},
+		{name: "serve alias", args: []string{"serve"}, kind: commandCore},
+		{name: "run", args: []string{"run", "--", "agent"}, kind: commandRun, rest: []string{"--", "agent"}},
+		{name: "unknown", args: []string{"wat"}, wantErr: "unknown command: wat"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kind, rest, err := classifyCommand(tt.args)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kind != tt.kind || strings.Join(rest, " ") != strings.Join(tt.rest, " ") {
+				t.Fatalf("kind=%q rest=%v", kind, rest)
+			}
+		})
+	}
+}
 
 func TestLocalGatewayWiresDurableJournal(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
