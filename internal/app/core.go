@@ -9,10 +9,12 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/MiguelReis944/Virgil/internal/config"
+	"github.com/MiguelReis944/Virgil/internal/controlauth"
 	"github.com/MiguelReis944/Virgil/internal/gateway"
 	"github.com/MiguelReis944/Virgil/internal/policies"
 	"github.com/MiguelReis944/Virgil/internal/storage"
@@ -43,6 +45,9 @@ func RunCore(ctx context.Context, options CoreOptions) error {
 		}
 		slog.Warn("config missing; starting setup server", "reason", err, "url", "http://127.0.0.1:8787/setup")
 		return runSetupServer(ctx, configPath, options.OpenPanel)
+	}
+	if _, err := controlauth.LoadOrCreate(filepath.Join(filepath.Dir(cfg.Storage.Path), "control.token")); err != nil {
+		return fmt.Errorf("load control credential: %w", err)
 	}
 	level := slog.LevelInfo
 	switch cfg.Server.LogLevel {

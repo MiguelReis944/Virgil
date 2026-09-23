@@ -128,6 +128,9 @@ func TestCoreOptionsServesPanelUntilCancelled(t *testing.T) {
 	if !ready {
 		t.Fatal("local core did not become ready")
 	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(dataPath), "control.token")); err != nil {
+		t.Fatalf("control credential was not created beside SQLite: %v", err)
+	}
 	response, err := client.Get("http://" + address + "/dashboard")
 	if err != nil {
 		t.Fatal(err)
