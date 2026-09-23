@@ -25,7 +25,7 @@ go build -o virgil ./cmd/virgil
 ./virgil --config configs/virgil.example.toml
 ```
 
-On Windows, run the resulting `virgil.exe`. For development without building a binary, use `go run ./cmd/virgil --config configs/virgil.example.toml`. The example configuration uses a local address and a database under `data/`. `GET http://127.0.0.1:8787/health` reports readiness and SQLite connection state. The core can also start a local setup page when the config is missing or invalid.
+On Windows, run the resulting `virgil.exe`. For development without building a binary, use `go run ./cmd/virgil --config configs/virgil.example.toml`. The example configuration uses a local address and a database under `data/`. `GET http://127.0.0.1:8787/health` reports readiness and SQLite connection state. The core starts a local setup page when the configuration file is missing; malformed or invalid configuration stops startup with an actionable error.
 
 ## Configure providers and policies
 
