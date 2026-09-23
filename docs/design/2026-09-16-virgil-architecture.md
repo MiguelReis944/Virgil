@@ -1,8 +1,14 @@
-# Virgil architecture
+# Virgil architecture: historical proposal
 
-Status: design for review, 2026-09-16. This document describes target behavior; the repository does not yet contain product code.
+Status: historical design proposal, 2026-09-16. This document preserves an earlier architecture exploration and is not the current product specification.
 
-> Virgil is an open source runtime control layer for LLM agents, with local guardrails, cost enforcement, and an optional team control plane.
+The current product direction is a unified local circuit breaker: one loopback core serves the gateway and panel, and `virgil run` supervises agent executions so a policy block can stop the process tree. The panel at `/dashboard` is the primary interface. Local operation does not require a hosted service or LAN access.
+
+## Historical proposal
+
+The sections below retain the earlier proposal for context. Its optional hosted Control Plane, remote policy, team administration, and future remote access ideas are deferred concepts, not requirements or promises for the current product.
+
+> Earlier vision: Virgil is an open source runtime control layer for LLM agents, with local guardrails, cost enforcement, and an optional team control plane.
 
 ## Scope and decisions
 

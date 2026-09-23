@@ -132,7 +132,7 @@ func handleSetupPost(w http.ResponseWriter, r *http.Request, configPath string, 
 		renderSetup(w, configPath, tmpl, fmt.Sprintf("Error saving config: %v", err), "err")
 		return
 	}
-	renderSetup(w, configPath, tmpl, "Saved! Restart Virgil to apply changes: Ctrl+C → go run ./cmd/virgil serve", "ok")
+	renderSetup(w, configPath, tmpl, "Restart Virgil to apply this configuration.", "ok")
 }
 
 const setupHTML = `<!DOCTYPE html>

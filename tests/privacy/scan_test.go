@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -36,6 +37,24 @@ func TestScanRejectsSecretShapes(t *testing.T) {
 func TestTrackedPublicFilesHaveNoSecrets(t *testing.T) {
 	if err := ScanTrackedRepository(filepath.Join("..", "..")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestREADMEPositionsLocalCircuitBreaker(t *testing.T) {
+	readme, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(readme)
+	for _, required := range []string{"Local circuit breaker", "virgil run", "/dashboard"} {
+		if !strings.Contains(content, required) {
+			t.Errorf("README is missing %q", required)
+		}
+	}
+	for _, requiredPhrase := range []string{"required second component", "must also install the Control Plane", "requires the Control Plane to run"} {
+		if strings.Contains(strings.ToLower(content), strings.ToLower(requiredPhrase)) {
+			t.Errorf("README presents the Control Plane as required: %q", requiredPhrase)
+		}
 	}
 }
 
