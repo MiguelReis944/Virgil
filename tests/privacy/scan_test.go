@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -46,14 +47,36 @@ func TestREADMEPositionsLocalCircuitBreaker(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(readme)
-	for _, required := range []string{"Local circuit breaker", "virgil run", "/dashboard"} {
-		if !strings.Contains(content, required) {
-			t.Errorf("README is missing %q", required)
+	targetMarker := "## Approved target (in progress)"
+	historicalMarker := "## Historical proposal and deferred context"
+	if !strings.Contains(content, "## Current functionality") || !strings.Contains(content, targetMarker) || !strings.Contains(content, historicalMarker) {
+		t.Fatal("README must separate current functionality, the approved in-progress target, and historical context")
+	}
+
+	targetAt := strings.Index(content, targetMarker)
+	historicalAt := strings.Index(content, historicalMarker)
+	if targetAt < 0 || historicalAt <= targetAt {
+		t.Fatal("README target and historical sections are out of order")
+	}
+	current := strings.ToLower(content[:targetAt])
+	target := strings.ToLower(content[targetAt:historicalAt])
+	for _, currentClaim := range []string{"does not yet receive policy-block signals", "does not yet provide process-tree termination"} {
+		if !strings.Contains(current, currentClaim) {
+			t.Errorf("README does not identify current limitation %q", currentClaim)
 		}
 	}
-	for _, requiredPhrase := range []string{"required second component", "must also install the Control Plane", "requires the Control Plane to run"} {
-		if strings.Contains(strings.ToLower(content), strings.ToLower(requiredPhrase)) {
-			t.Errorf("README presents the Control Plane as required: %q", requiredPhrase)
+	for _, targetTerm := range []string{"run tokens", "sse control connection", "full-tree termination", "/dashboard/executions", "not available in the current implementation"} {
+		if !strings.Contains(target, targetTerm) {
+			t.Errorf("README does not mark %q as target behavior", targetTerm)
+		}
+	}
+
+	positiveRequirement := regexp.MustCompile(`(?i)\b(?:must|requires?|required|mandatory|depends on)\b[^.!?\n]{0,120}\bcontrol plane\b|\bcontrol plane\b[^.!?\n]{0,120}\b(?:required|mandatory|must be used)\b`)
+	negation := regexp.MustCompile(`(?i)\b(?:not|no|without|never)\b`)
+	primaryPath := content[:historicalAt]
+	for _, sentence := range strings.FieldsFunc(primaryPath, func(r rune) bool { return r == '.' || r == '!' || r == '?' || r == '\n' }) {
+		if positiveRequirement.MatchString(sentence) && !negation.MatchString(sentence) {
+			t.Errorf("README makes the Control Plane sound required in the primary product path: %q", strings.TrimSpace(sentence))
 		}
 	}
 }

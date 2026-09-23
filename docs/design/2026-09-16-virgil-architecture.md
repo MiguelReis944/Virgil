@@ -2,7 +2,9 @@
 
 Status: historical design proposal, 2026-09-16. This document preserves an earlier architecture exploration and is not the current product specification.
 
-The current product direction is a unified local circuit breaker: one loopback core serves the gateway and panel, and `virgil run` supervises agent executions so a policy block can stop the process tree. The panel at `/dashboard` is the primary interface. Local operation does not require a hosted service or LAN access.
+The current command starts one local core and opens the existing telemetry panel at `/dashboard`. The current `virgil run` wrapper can enforce a deadline and stop its root child process, but it is not yet connected to policy-block signals and does not guarantee process-tree termination.
+
+The approved circuit-breaker target (in progress) connects supervised runs to the local core, delivers policy blocks over an authenticated control stream, terminates the full process tree, and records outcomes for panel review. Those capabilities are planned and are not implemented by the current command.
 
 ## Historical proposal
 

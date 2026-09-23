@@ -1,39 +1,38 @@
-# Supervised execution
+# Runner: current behavior and planned circuit breaker
 
-`virgil run` supervises an agent process tree through the local Virgil core. The core must be running first; start `virgil` and complete setup in the panel. API traffic and the panel share the core's loopback origin.
+## Current behavior
 
-## Usage
+The current `virgil run` command starts one child process while a Virgil gateway is already running. It adds a correlation ID and gateway URL to the child environment, enforces an optional wall-clock deadline, and stops the root process when the command is interrupted. Child stdout and stderr are passed through to the parent terminal; Virgil does not store them.
 
-```sh
-virgil run [flags] -- <command> [args...]
-```
+The command currently supports these flags:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--gateway` | `http://127.0.0.1:8787` | Gateway URL injected into the child. |
+| `--run-id` | *(generated)* | Correlation ID injected as `VIRGIL_RUN_ID`. |
+| `--deadline` | `0` (unlimited) | Wall-clock limit, such as `30m` or `2h`. |
+| `--env` | | Extra `KEY=VALUE` pairs for the child, comma-separated. |
 
 Example:
 
 ```sh
+# Terminal 1: start the local core and panel.
+virgil
+
+# Terminal 2: start an agent with a deadline.
 virgil run --deadline 10m -- python my_agent.py
 ```
 
-The default panel entry is `http://127.0.0.1:8787/dashboard`. An execution's details are available in the panel at `/dashboard/executions/<run_id>`.
+The current runner is not connected to policy-block notifications from the gateway. Although the internal runner API has a policy-stop hook, the CLI does not connect it. On interruption or deadline, it kills the root child process; it does not yet guarantee termination of descendants.
 
-## Options
+The child inherits the parent's environment after variables whose names include `API_KEY=`, `API_TOKEN=`, or `SECRET=` and `VIRGIL_LOCAL_APP_TOKEN` are removed. Use `--env` for child-specific values. Provider credentials configured in the core are not injected into the child.
 
-| Flag | Description |
-|------|-------------|
-| `--config` | Configuration file used by the local core. |
-| `--address` | Loopback address of the local core; defaults to the configured address. |
-| `--run-id` | Optional validated execution ID; Virgil generates one when omitted. |
-| `--deadline` | Optional hard wall-clock limit, such as `30m` or `2h`. |
-| `--env` | Extra child-specific `KEY=VALUE` pairs, comma-separated. |
+The existing product panel is at `/dashboard`. The planned per-execution page at `/dashboard/executions/<run_id>` is not implemented yet.
 
-The core creates an execution identity before starting the child. It injects the run ID, local gateway address, and a short-lived run credential needed for authenticated gateway traffic. The core keeps configured provider credentials; Virgil does not copy them into the child's environment.
+## Approved circuit-breaker target (in progress)
 
-## Circuit-break behavior
+The approved design will register runs with the local core, use an authenticated control stream to deliver policy-block signals, and terminate the complete process tree when a supervised request is blocked. It will record the final execution outcome for panel review. Run tokens, the SSE control connection, full-tree termination, and the execution detail page are target behavior and are not part of the current implementation.
 
-When a configured policy blocks a request from a supervised run, the core signals the runner and the runner terminates the complete process tree. The execution detail in the panel records the policy outcome and whether termination succeeded. A deadline, parent interruption, or loss of the core control connection also stops the supervised tree and is reported as its own outcome.
+## Privacy boundary
 
-A client using the gateway without `virgil run` can receive a policy block response, but the gateway cannot stop a process it does not supervise. The initial supervised request integration supports OpenAI-compatible traffic. `virgil run` fails closed if the core or its signal stream is unavailable.
-
-## Privacy
-
-The runner does not capture child stdout or stderr. Provider credentials stay in the core. Prompts, responses, and raw tool arguments remain excluded from telemetry unless the existing explicit content-capture settings are enabled. Examples and test fixtures use synthetic values only.
+The current runner does not persist child stdout or stderr. Gateway telemetry is subject to the current privacy and redaction behavior documented in the [README](../README.md). The planned control protocol will keep run credentials out of logs, URLs, and panel HTML; this remains an implementation requirement for the in-progress work.
