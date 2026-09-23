@@ -1,0 +1,119 @@
+package runner
+
+import (
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"strings"
+	"sync"
+
+	"github.com/MiguelReis944/Virgil/internal/telemetry"
+)
+
+// ProcessResult is the root process exit status. Err is the error returned by Wait.
+type ProcessResult struct {
+	ExitCode int
+	Err      error
+}
+
+// Process owns the root process and all descendants it creates.
+type Process interface {
+	PID() int
+	Wait() ProcessResult
+	Terminate(context.Context) error
+}
+
+type platformProcess interface {
+	terminate(context.Context, <-chan struct{}) error
+	close() error
+}
+
+type ownedProcess struct {
+	cmd      *exec.Cmd
+	platform platformProcess
+	done     chan struct{}
+	result   ProcessResult
+	termDone chan struct{}
+	termErr  error
+	termOnce sync.Once
+}
+
+// Start launches the child in an operating-system process group or job object.
+// The caller owns the returned Process and must call Wait or Terminate.
+func Start(ctx context.Context, spec RunSpec) (Process, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(spec.Command) == 0 {
+		return nil, errors.New("runner: command is required")
+	}
+	runID := spec.RunID
+	if runID == "" {
+		id, err := telemetry.NewID(16)
+		if err != nil {
+			return nil, err
+		}
+		runID = "run_" + id
+	}
+	cmd := exec.Command(spec.Command[0], spec.Command[1:]...)
+	cmd.Env = childEnvironment(spec, runID)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	platform, err := startPlatform(cmd)
+	if err != nil {
+		return nil, err
+	}
+	proc := &ownedProcess{cmd: cmd, platform: platform, done: make(chan struct{}), termDone: make(chan struct{})}
+	go func() {
+		err := cmd.Wait()
+		closeErr := platform.close()
+		proc.result = ProcessResult{ExitCode: cmd.ProcessState.ExitCode(), Err: errors.Join(err, closeErr)}
+		close(proc.done)
+	}()
+	return proc, nil
+}
+
+func childEnvironment(spec RunSpec, runID string) []string {
+	raw := os.Environ()
+	env := make([]string, 0, len(raw)+len(spec.Env)+5)
+	for _, kv := range raw {
+		upper := strings.ToUpper(kv)
+		if strings.Contains(upper, "API_KEY=") ||
+			strings.Contains(upper, "API_TOKEN=") ||
+			strings.Contains(upper, "SECRET=") ||
+			strings.HasPrefix(upper, "VIRGIL_LOCAL_APP_TOKEN=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	env = append(env, "VIRGIL_RUN_ID="+runID)
+	if spec.GatewayURL != "" {
+		env = append(env, "VIRGIL_GATEWAY_URL="+spec.GatewayURL)
+		env = append(env, "OPENAI_BASE_URL="+spec.GatewayURL+"/v1")
+		env = append(env, "OPENAI_API_BASE="+spec.GatewayURL+"/v1")
+		env = append(env, "ANTHROPIC_BASE_URL="+spec.GatewayURL)
+	}
+	for key, value := range spec.Env {
+		env = append(env, key+"="+value)
+	}
+	return env
+}
+
+func (p *ownedProcess) PID() int { return p.cmd.Process.Pid }
+
+func (p *ownedProcess) Wait() ProcessResult {
+	<-p.done
+	return p.result
+}
+
+func (p *ownedProcess) Terminate(ctx context.Context) error {
+	p.termOnce.Do(func() {
+		p.termErr = p.platform.terminate(ctx, p.done)
+		<-p.done
+		close(p.termDone)
+	})
+	<-p.termDone
+	return p.termErr
+}

@@ -163,3 +163,37 @@ func TestRunnerContextCancellation(t *testing.T) {
 	}
 	_ = os.Getenv // suppress unused import warning
 }
+
+func TestProcessNormalExitAndRepeatedWait(t *testing.T) {
+	if _, err := exec.LookPath(trueCmd()[0]); err != nil {
+		t.Skipf("command not found: %v", err)
+	}
+	proc, err := Start(context.Background(), RunSpec{Command: trueCmd()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := proc.Wait()
+	if first.ExitCode != 0 || first.Err != nil {
+		t.Fatalf("normal exit: %+v", first)
+	}
+	if again := proc.Wait(); again != first {
+		t.Fatalf("repeated Wait: %+v, want %+v", again, first)
+	}
+	if err := proc.Terminate(context.Background()); err != nil {
+		t.Fatalf("Terminate after Wait: %v", err)
+	}
+	if err := proc.Terminate(context.Background()); err != nil {
+		t.Fatalf("repeated Terminate: %v", err)
+	}
+}
+
+func TestProcessStartFailure(t *testing.T) {
+	if _, err := Start(context.Background(), RunSpec{Command: []string{"virgil-command-that-does-not-exist"}}); err == nil {
+		t.Fatal("Start succeeded for missing executable")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := Start(ctx, RunSpec{Command: trueCmd()}); err != context.Canceled {
+		t.Fatalf("pre-cancelled Start: %v, want context.Canceled", err)
+	}
+}
