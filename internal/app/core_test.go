@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -58,6 +59,42 @@ func TestCoreOptionsRunCoreRejectsOccupiedListener(t *testing.T) {
 	}
 }
 
+func TestRunCoreRejectsMalformedConfigInsteadOfStartingSetup(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "virgil.toml")
+	if err := os.WriteFile(configPath, []byte("[server\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	err := RunCore(ctx, CoreOptions{ConfigPath: configPath})
+	if err == nil || !strings.Contains(err.Error(), "parse config") {
+		t.Fatalf("error = %v, want actionable parse error", err)
+	}
+}
+
+func TestRunCoreRejectsUnreadableConfigInsteadOfStartingSetup(t *testing.T) {
+	configPath := t.TempDir() // A directory cannot be read as a TOML file.
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	err := RunCore(ctx, CoreOptions{ConfigPath: configPath})
+	if err == nil || !strings.Contains(err.Error(), "read config") {
+		t.Fatalf("error = %v, want actionable read error", err)
+	}
+}
+
+func TestRunCoreRejectsInvalidConfigInsteadOfStartingSetup(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "virgil.toml")
+	if err := os.WriteFile(configPath, []byte("[server]\nlisten = \"0.0.0.0:8787\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	err := RunCore(ctx, CoreOptions{ConfigPath: configPath})
+	if err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("error = %v, want loopback validation error", err)
+	}
+}
+
 func TestCoreOptionsServesPanelUntilCancelled(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -96,6 +133,7 @@ func TestCoreOptionsServesPanelUntilCancelled(t *testing.T) {
 		t.Fatal(err)
 	}
 	response.Body.Close()
+	client.CloseIdleConnections()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("panel status = %d", response.StatusCode)
 	}
@@ -105,7 +143,155 @@ func TestCoreOptionsServesPanelUntilCancelled(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(7 * time.Second):
 		t.Fatal("core did not stop after cancellation")
+	}
+}
+
+func TestServePanelWaitsForHTTPHandlerBeforeOpening(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	panelURL := "http://" + listener.Addr().String() + "/dashboard"
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(started) })
+		select {
+		case <-release:
+			w.WriteHeader(http.StatusOK)
+		case <-r.Context().Done():
+		}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	opened := make(chan string, 1)
+	finished := make(chan error, 1)
+	go func() {
+		finished <- servePanel(ctx, listener, handler, panelURL, func(url string) error {
+			opened <- url
+			return nil
+		})
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("readiness probe did not reach handler")
+	}
+	select {
+	case <-opened:
+		t.Fatal("browser opened before handler answered")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case got := <-opened:
+		if got != panelURL {
+			t.Fatalf("opened %q, want %q", got, panelURL)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("browser did not open after handler answered")
+	}
+	cancel()
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not stop")
+	}
+}
+
+func TestServePanelDoesNotOpenAfterCancellation(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	panelURL := "http://" + listener.Addr().String() + "/dashboard"
+	started := make(chan struct{})
+	var once sync.Once
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(started) })
+		<-r.Context().Done()
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	opened := make(chan struct{}, 1)
+	finished := make(chan error, 1)
+	go func() {
+		finished <- servePanel(ctx, listener, handler, panelURL, func(string) error {
+			opened <- struct{}{}
+			return nil
+		})
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("readiness probe did not reach handler")
+	}
+	cancel()
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not stop")
+	}
+	select {
+	case <-opened:
+		t.Fatal("browser opened after cancellation")
+	default:
+	}
+}
+
+func TestServePanelDoesNotOpenMissingPanelPage(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	panelURL := "http://" + listener.Addr().String() + "/dashboard"
+	served := make(chan struct{}, 1)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		select {
+		case served <- struct{}{}:
+		default:
+		}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	opened := make(chan struct{}, 1)
+	finished := make(chan error, 1)
+	go func() {
+		finished <- servePanel(ctx, listener, handler, panelURL, func(string) error {
+			opened <- struct{}{}
+			return nil
+		})
+	}()
+	select {
+	case <-served:
+	case <-time.After(2 * time.Second):
+		t.Fatal("panel probe did not reach handler")
+	}
+	select {
+	case <-opened:
+		t.Fatal("browser opened a missing panel page")
+	case <-time.After(100 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not stop")
 	}
 }

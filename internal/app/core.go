@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -37,7 +38,10 @@ func RunCore(ctx context.Context, options CoreOptions) error {
 	loadDotEnv(envPath)
 	cfg, err := config.Load(configPath, os.Getenv)
 	if err != nil {
-		slog.Warn("config invalid or missing; starting setup server", "reason", err, "url", "http://127.0.0.1:8787/setup")
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("load config %q: %w", configPath, err)
+		}
+		slog.Warn("config missing; starting setup server", "reason", err, "url", "http://127.0.0.1:8787/setup")
 		return runSetupServer(ctx, configPath, options.OpenPanel)
 	}
 	level := slog.LevelInfo
@@ -91,12 +95,11 @@ func RunCore(ctx context.Context, options CoreOptions) error {
 	defer listener.Close()
 	panelURL := "http://" + listener.Addr().String() + "/dashboard"
 	slog.Info("gateway listening", "address", listener.Addr().String(), "panel", panelURL)
+	var open func(string) error
 	if options.OpenPanel {
-		if err := OpenBrowser(panelURL); err != nil {
-			slog.Warn("could not open panel", "error", err, "url", panelURL)
-		}
+		open = OpenBrowser
 	}
-	return gateway.Serve(ctx, listener, handler)
+	return servePanel(ctx, listener, handler, panelURL, open)
 }
 
 func runSetupServer(ctx context.Context, configPath string, openPanel bool) error {
@@ -114,12 +117,83 @@ func runSetupServer(ctx context.Context, configPath string, openPanel bool) erro
 	defer listener.Close()
 	panelURL := "http://" + listener.Addr().String() + "/dashboard"
 	slog.Info("setup server listening", "address", listener.Addr().String(), "panel", panelURL)
+	var open func(string) error
 	if openPanel {
-		if err := OpenBrowser(panelURL); err != nil {
-			slog.Warn("could not open panel", "error", err, "url", panelURL)
+		open = OpenBrowser
+	}
+	return servePanel(ctx, listener, mux, panelURL, open)
+}
+
+// servePanel opens the browser only after the panel handler has answered a request.
+func servePanel(ctx context.Context, listener net.Listener, handler http.Handler, panelURL string, open func(string) error) error {
+	if open == nil {
+		return gateway.Serve(ctx, listener, handler)
+	}
+	serveCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan struct{})
+	var serveErr error
+	go func() {
+		serveErr = gateway.Serve(serveCtx, listener, handler)
+		close(done)
+	}()
+	readyCtx, stopWaiting := context.WithTimeout(ctx, 5*time.Second)
+	defer stopWaiting()
+	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{
+		Transport:     transport,
+		Timeout:       500 * time.Millisecond,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	for {
+		request, err := http.NewRequestWithContext(readyCtx, http.MethodGet, panelURL, nil)
+		if err != nil {
+			cancel()
+			<-done
+			return fmt.Errorf("panel readiness request: %w", err)
+		}
+		response, err := client.Do(request)
+		if err == nil {
+			response.Body.Close()
+			if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusBadRequest {
+				break
+			}
+		}
+		if ctx.Err() != nil {
+			cancel()
+			<-done
+			return serveErr
+		}
+		select {
+		case <-ctx.Done():
+			cancel()
+			<-done
+			return serveErr
+		case <-done:
+			return serveErr
+		case <-readyCtx.Done():
+			cancel()
+			<-done
+			return fmt.Errorf("panel did not become ready: %w", readyCtx.Err())
+		case <-time.After(25 * time.Millisecond):
 		}
 	}
-	return gateway.Serve(ctx, listener, mux)
+	if ctx.Err() != nil {
+		cancel()
+		<-done
+		return serveErr
+	}
+	select {
+	case <-done:
+		return serveErr
+	default:
+	}
+	if err := open(panelURL); err != nil {
+		slog.Warn("could not open panel", "error", err, "url", panelURL)
+	}
+	<-done
+	return serveErr
 }
 
 func loadDotEnv(path string) {
