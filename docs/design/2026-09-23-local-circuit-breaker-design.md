@@ -44,6 +44,7 @@ It starts the API and panel on the configured loopback address. Unless `--no-ope
 
 ```text
 virgil run \
+  [--config virgil.toml] \
   [--address http://127.0.0.1:8787] \
   [--run-id run_example] \
   [--deadline 30m] \
@@ -51,7 +52,7 @@ virgil run \
   -- command arg1 arg2
 ```
 
-`--address` selects the running local core and must resolve to loopback. `--run-id` is optional and must pass the existing run ID validation. A generated ID is used otherwise. `--deadline` remains a hard wall-clock limit. `--env` remains an explicit escape hatch for child-specific variables.
+`--config` locates the same installation configuration used by the core, including its storage directory and control credential. `--address` overrides the configured listen address and must resolve to loopback. `--run-id` is optional and must pass the existing run ID validation. A generated ID is used otherwise. `--deadline` remains a hard wall-clock limit. `--env` remains an explicit escape hatch for child-specific variables.
 
 The existing `--gateway` option becomes `--address`. It accepts only a trusted loopback Virgil core implementing the circuit-break control protocol.
 
@@ -219,7 +220,11 @@ CREATE TABLE executions (
     policy_reason TEXT,
     policy_attempt INTEGER,
     policy_threshold INTEGER,
-    blocked_call_estimate_usd TEXT
+    blocked_call_estimate_usd TEXT,
+    termination_status TEXT CHECK (termination_status IN (
+        'not_required', 'succeeded', 'failed'
+    )),
+    termination_error_code TEXT
 );
 
 CREATE INDEX executions_state_started_idx
@@ -238,7 +243,7 @@ func (j *Journal) Execution(ctx context.Context, runID string) (Execution, error
 func (j *Journal) ListExecutions(ctx context.Context, limit int) ([]Execution, error)
 ```
 
-Transitions are conditional: `starting -> running -> terminal`, with `starting -> failed` allowed for a child startup failure. Terminal states cannot be overwritten. On startup, executions left in `starting` or `running` by a previous Virgil crash become `interrupted` with reason `virgil_restart`; this recovery happens before a new execution is inserted.
+Transitions are conditional: `starting -> running -> terminal`, with `starting -> failed` allowed for a child startup failure. Terminal states cannot be overwritten. A core policy block atomically sets `blocked` and its policy fields. The Runner's later finish call may fill only the termination result, exit code, end time, and stop reason on that blocked row. Successful termination keeps state `blocked`; failed termination changes it to `termination_failed` while preserving all policy fields. Repeated finish calls cannot change an already recorded termination result. On startup, executions left in `starting` or `running` by a previous Virgil crash become `interrupted` with reason `virgil_restart`; this recovery happens before a new execution is inserted.
 
 ## Dashboard and terminal experience
 
