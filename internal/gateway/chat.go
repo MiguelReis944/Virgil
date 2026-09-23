@@ -40,6 +40,7 @@ type router struct {
 	privacy        config.PrivacyConfig
 	pricingCfg     config.PricingConfig
 	priceRegistry  *pricing.Registry
+	executionAuth  ExecutionAuthenticator
 }
 
 // sharedTransport is optimised for many concurrent calls to the same upstream
@@ -93,6 +94,7 @@ var errorMessages = map[string]string{
 	"model_not_configured":     "The requested model is not configured in this gateway. Check the 'model' field or run 'virgil init' to generate a config.",
 	"unsupported_request":      "The request uses capabilities not supported by this model (e.g. streaming or tools). Check the provider capabilities.",
 	"provider_key_required":    "No API key could be resolved for this provider. Set the env var referenced in the provider's api_key config field.",
+	"invalid_execution_token":  "Execution token is missing or invalid.",
 	"invalid_provider_config":  "Provider config is invalid. Check the provider base_url and type in virgil.toml.",
 	"trace_unavailable":        "Failed to generate a trace ID.",
 	"run_id_unavailable":       "Failed to resolve or generate a run ID.",
@@ -155,17 +157,28 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "unsupported_request")
 		return
 	}
-	key, ok := router.resolveKey(req.Header.Get("Authorization"), selected.keyEnv)
+	identity, supervised := identityFromRequest(req)
+	var key string
+	if supervised && identity.UseConfiguredKey {
+		key = router.getenv(selected.keyEnv)
+		ok = selected.keyEnv != "" && key != ""
+	} else {
+		key, ok = router.resolveKey(req.Header.Get("Authorization"), selected.keyEnv)
+	}
 	if !ok {
 		writeAPIError(w, http.StatusUnauthorized, "provider_key_required")
 		return
 	}
-	slog.Info("→ request",
-		"provider", selected.provider,
-		"model", selector.Model,
-		"stream", selector.Stream,
-		"run_id", req.Header.Get("X-Virgil-Run-ID"),
-	)
+	runID := identity.RunID
+	if !supervised {
+		var err error
+		runID, err = telemetry.ResolveRunID(req.Header.Get("X-Virgil-Run-ID"))
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "run_id_unavailable")
+			return
+		}
+	}
+	slog.Info("→ request", "provider", selected.provider, "model", selector.Model, "stream", selector.Stream, "run_id", runID)
 	upstreamReq, err := selected.adapter.Build(req.Context(), body, key)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_provider_config")
@@ -174,11 +187,6 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 	trace, err := telemetry.NewTrace(req.Header.Get("traceparent"))
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "trace_unavailable")
-		return
-	}
-	runID, err := telemetry.ResolveRunID(req.Header.Get("X-Virgil-Run-ID"))
-	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "run_id_unavailable")
 		return
 	}
 	w.Header().Set("X-Virgil-Run-ID", runID)

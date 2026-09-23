@@ -27,6 +27,8 @@ The current runner is not connected to policy-block notifications from the gatew
 
 The child inherits the parent's environment after variables whose names include `API_KEY=`, `API_TOKEN=`, or `SECRET=` and `VIRGIL_LOCAL_APP_TOKEN` are removed. Use `--env` for child-specific values. Provider credentials configured in the core are not injected into the child.
 
+When a gateway URL is supplied, the runner sets `OPENAI_BASE_URL` and `OPENAI_API_BASE` to its `/v1` endpoint. Gateway inbound traffic uses the OpenAI-compatible API. The runner does not set `ANTHROPIC_BASE_URL` because the gateway has no inbound Anthropic Messages route.
+
 The existing product panel is at `/dashboard`. The planned per-execution page at `/dashboard/executions/<run_id>` is not implemented yet.
 
 ## Approved circuit-breaker target (in progress)

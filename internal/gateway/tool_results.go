@@ -13,12 +13,13 @@ import (
 const maxToolResultRequest = 4096
 
 func (router *router) toolResults(w http.ResponseWriter, req *http.Request) {
+	identity, supervised := identityFromRequest(req)
 	token := router.getenv("VIRGIL_LOCAL_APP_TOKEN")
-	if token == "" || router.policy == nil {
+	if router.policy == nil || (!supervised && token == "") {
 		http.NotFound(w, req)
 		return
 	}
-	if subtle.ConstantTimeCompare([]byte(req.Header.Get("X-Virgil-App-Token")), []byte(token)) != 1 {
+	if !supervised && subtle.ConstantTimeCompare([]byte(req.Header.Get("X-Virgil-App-Token")), []byte(token)) != 1 {
 		writeAPIError(w, http.StatusUnauthorized, "invalid_app_token")
 		return
 	}
@@ -40,6 +41,9 @@ func (router *router) toolResults(w http.ResponseWriter, req *http.Request) {
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		writeToolResultDecodeError(w, err)
 		return
+	}
+	if supervised {
+		input.RunID = identity.RunID
 	}
 	_, err := router.policy.RecordToolResult(req.Context(), policies.ToolResult{
 		RunID: input.RunID, ToolCallID: input.ToolCallID,

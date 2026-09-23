@@ -45,6 +45,7 @@ type Dependencies struct {
 	ConfigPath        string // path to virgil.toml; enables GET/POST /setup when set
 	DashboardPassword string // empty = no auth
 	Control           *executions.HTTPHandler
+	ExecutionAuth     ExecutionAuthenticator // nil keeps standalone gateway behavior
 }
 
 func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
@@ -60,6 +61,7 @@ func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
 	}
 	router.recorder = deps.Recorder
 	router.policy = deps.Policy
+	router.executionAuth = deps.ExecutionAuth
 	router.installationID = deps.InstallationID
 	if router.installationID == "" {
 		id, err := telemetry.NewID(16)
@@ -69,8 +71,8 @@ func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
 		router.installationID = "install_" + id
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/chat/completions", router.chat)
-	mux.HandleFunc("POST /v1/tool-results", router.toolResults)
+	mux.HandleFunc("POST /v1/chat/completions", router.authenticateExecution(router.chat, "Authorization"))
+	mux.HandleFunc("POST /v1/tool-results", router.authenticateExecution(router.toolResults, "X-Virgil-App-Token"))
 	mux.HandleFunc("GET /v1/models", router.listModels)
 	if deps.Control != nil {
 		mux.HandleFunc("POST /api/executions", deps.Control.Register)

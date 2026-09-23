@@ -165,6 +165,16 @@ func TestRunnerContextCancellation(t *testing.T) {
 	_ = os.Getenv // suppress unused import warning
 }
 
+func TestRunnerDoesNotAdvertiseAnthropicInboundRoute(t *testing.T) {
+	t.Setenv("ANTHROPIC_BASE_URL", "https://anthropic.example")
+	env := childEnvironment(RunSpec{GatewayURL: "http://127.0.0.1:8787"}, "run_fixture")
+	for _, entry := range env {
+		if entry == "ANTHROPIC_BASE_URL=http://127.0.0.1:8787" {
+			t.Fatal("runner injected gateway URL as an unsupported Anthropic inbound route")
+		}
+	}
+}
+
 func TestProcessNormalExitAndRepeatedWait(t *testing.T) {
 	if _, err := exec.LookPath(trueCmd()[0]); err != nil {
 		t.Skipf("command not found: %v", err)
