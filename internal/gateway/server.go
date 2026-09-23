@@ -11,6 +11,7 @@ import (
 
 	"github.com/MiguelReis944/Virgil/internal/config"
 	"github.com/MiguelReis944/Virgil/internal/dashboard"
+	"github.com/MiguelReis944/Virgil/internal/executions"
 	"github.com/MiguelReis944/Virgil/internal/policies"
 	"github.com/MiguelReis944/Virgil/internal/storage"
 	"github.com/MiguelReis944/Virgil/internal/telemetry"
@@ -43,6 +44,7 @@ type Dependencies struct {
 	Policy            *policies.Engine
 	ConfigPath        string // path to virgil.toml; enables GET/POST /setup when set
 	DashboardPassword string // empty = no auth
+	Control           *executions.HTTPHandler
 }
 
 func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
@@ -70,6 +72,12 @@ func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
 	mux.HandleFunc("POST /v1/chat/completions", router.chat)
 	mux.HandleFunc("POST /v1/tool-results", router.toolResults)
 	mux.HandleFunc("GET /v1/models", router.listModels)
+	if deps.Control != nil {
+		mux.HandleFunc("POST /api/executions", deps.Control.Register)
+		mux.HandleFunc("GET /api/executions/{run_id}/signals", deps.Control.Signals)
+		mux.HandleFunc("POST /api/executions/{run_id}/running", deps.Control.Running)
+		mux.HandleFunc("POST /api/executions/{run_id}/finish", deps.Control.Finish)
+	}
 	if deps.ConfigPath != "" {
 		setupH := newSetupHandler(deps.ConfigPath)
 		mux.HandleFunc("GET /setup", setupH)

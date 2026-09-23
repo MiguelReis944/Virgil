@@ -143,6 +143,34 @@ func TestCoreOptionsServesPanelUntilCancelled(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("panel status = %d", response.StatusCode)
 	}
+	controlURL := "http://" + address + "/api/executions"
+	unauthorized, err := http.Post(controlURL, "application/json", strings.NewReader(`{"run_id":"core_run"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unauthorized.Body.Close()
+	if unauthorized.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthorized control status = %d", unauthorized.StatusCode)
+	}
+	credential, err := os.ReadFile(filepath.Join(filepath.Dir(dataPath), "control.token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodPost, controlURL, strings.NewReader(`{"run_id":"core_run"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+string(credential))
+	request.Header.Set("Content-Type", "application/json")
+	registered, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered.Body.Close()
+	client.CloseIdleConnections()
+	if registered.StatusCode != http.StatusCreated {
+		t.Fatalf("authenticated control status = %d", registered.StatusCode)
+	}
 	cancel()
 	select {
 	case err := <-finished:

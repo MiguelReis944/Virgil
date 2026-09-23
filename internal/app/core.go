@@ -15,6 +15,7 @@ import (
 
 	"github.com/MiguelReis944/Virgil/internal/config"
 	"github.com/MiguelReis944/Virgil/internal/controlauth"
+	"github.com/MiguelReis944/Virgil/internal/executions"
 	"github.com/MiguelReis944/Virgil/internal/gateway"
 	"github.com/MiguelReis944/Virgil/internal/policies"
 	"github.com/MiguelReis944/Virgil/internal/storage"
@@ -46,7 +47,8 @@ func RunCore(ctx context.Context, options CoreOptions) error {
 		slog.Warn("config missing; starting setup server", "reason", err, "url", "http://127.0.0.1:8787/setup")
 		return runSetupServer(ctx, configPath, options.OpenPanel)
 	}
-	if _, err := controlauth.LoadOrCreate(filepath.Join(filepath.Dir(cfg.Storage.Path), "control.token")); err != nil {
+	credential, err := controlauth.LoadOrCreate(filepath.Join(filepath.Dir(cfg.Storage.Path), "control.token"))
+	if err != nil {
 		return fmt.Errorf("load control credential: %w", err)
 	}
 	level := slog.LevelInfo
@@ -70,7 +72,7 @@ func RunCore(ctx context.Context, options CoreOptions) error {
 		return err
 	}
 	defer readDB.Close()
-	handler, journal, engine, err := BuildHandlerWithEngine(cfg, configPath, db, readDB)
+	handler, journal, engine, err := buildHandlerWithControl(cfg, configPath, db, readDB, &credential)
 	if err != nil {
 		return err
 	}
@@ -228,6 +230,10 @@ func loadDotEnv(path string) {
 }
 
 func BuildHandlerWithEngine(cfg config.Config, configPath string, db, readDB *sql.DB) (http.Handler, *storage.Journal, *policies.Engine, error) {
+	return buildHandlerWithControl(cfg, configPath, db, readDB, nil)
+}
+
+func buildHandlerWithControl(cfg config.Config, configPath string, db, readDB *sql.DB, credential *controlauth.Credential) (http.Handler, *storage.Journal, *policies.Engine, error) {
 	journal, err := storage.NewJournalWithReadPool(db, readDB)
 	if err != nil {
 		return nil, nil, nil, err
@@ -251,6 +257,11 @@ func BuildHandlerWithEngine(cfg config.Config, configPath string, db, readDB *sq
 		return nil, nil, nil, err
 	}
 	var recorder gateway.EventRecorder = journal
+	var control *executions.HTTPHandler
+	if credential != nil {
+		registry := executions.NewRegistry(journal)
+		control = executions.NewHTTPHandler(*credential, registry, journal)
+	}
 	if cfg.ControlPlane.Enabled {
 		recorder = destinationRecorder{journal: journal, destination: "controlplane"}
 	}
@@ -259,6 +270,7 @@ func BuildHandlerWithEngine(cfg config.Config, configPath string, db, readDB *sq
 		Recorder: recorder, InstallationID: journal.InstallationID(), Policy: engine,
 		ConfigPath:        configPath,
 		DashboardPassword: cfg.Dashboard.Password,
+		Control:           control,
 	})
 	if err != nil {
 		journal.Close()
