@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"runtime"
@@ -195,5 +196,92 @@ func TestProcessStartFailure(t *testing.T) {
 	cancel()
 	if _, err := Start(ctx, RunSpec{Command: trueCmd()}); err != context.Canceled {
 		t.Fatalf("pre-cancelled Start: %v, want context.Canceled", err)
+	}
+}
+
+type failingPlatform struct {
+	terminateErr error
+	closeErr     error
+}
+
+func (p failingPlatform) terminate(context.Context, <-chan struct{}) error { return p.terminateErr }
+func (p failingPlatform) close() error                                     { return p.closeErr }
+
+func TestTerminateFailureReturnsAndReapsRoot(t *testing.T) {
+	if _, err := exec.LookPath(sleepCmd(0)[0]); err != nil {
+		t.Skipf("command not found: %v", err)
+	}
+	cmd := exec.Command(sleepCmd(0)[0], sleepCmd(0)[1:]...)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	stopErr := errors.New("job termination failed")
+	closeErr := errors.New("fallback close failed")
+	proc := newOwnedProcess(cmd, failingPlatform{terminateErr: stopErr, closeErr: closeErr})
+	defer proc.Wait()
+	defer cmd.Process.Kill()
+	returned := make(chan error, 1)
+	go func() { returned <- proc.Terminate(context.Background()) }()
+	select {
+	case err := <-returned:
+		if !errors.Is(err, stopErr) || !errors.Is(err, closeErr) {
+			t.Fatalf("Terminate error = %v, want both failures", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Terminate blocked after platform failure")
+	}
+	if result := proc.Wait(); result.ExitCode == 0 {
+		t.Fatalf("fallback did not stop root process: %+v", result)
+	}
+}
+
+func TestTerminateReportsPlatformCloseFailure(t *testing.T) {
+	if _, err := exec.LookPath(trueCmd()[0]); err != nil {
+		t.Skipf("command not found: %v", err)
+	}
+	cmd := exec.Command(trueCmd()[0], trueCmd()[1:]...)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	closeErr := errors.New("job close failed")
+	proc := newOwnedProcess(cmd, failingPlatform{closeErr: closeErr})
+	if result := proc.Wait(); !errors.Is(result.Err, closeErr) {
+		t.Fatalf("Wait error = %v, want %v", result.Err, closeErr)
+	}
+	if err := proc.Terminate(context.Background()); !errors.Is(err, closeErr) {
+		t.Fatalf("Terminate error = %v, want %v", err, closeErr)
+	}
+}
+
+type failedTerminationProcess struct {
+	done chan struct{}
+	err  error
+}
+
+func (p failedTerminationProcess) PID() int { return 1 }
+func (p failedTerminationProcess) Wait() ProcessResult {
+	<-p.done
+	return ProcessResult{}
+}
+func (p failedTerminationProcess) Terminate(context.Context) error { return p.err }
+
+func TestSuperviseReturnsTerminationFailureWithoutWaitingAgain(t *testing.T) {
+	stop := make(chan struct{})
+	close(stop)
+	waitDone := make(chan struct{})
+	defer close(waitDone)
+	stopErr := errors.New("job termination failed")
+	returned := make(chan error, 1)
+	go func() {
+		_, err := supervise(context.Background(), RunSpec{PolicyStop: stop}, "run_test", failedTerminationProcess{done: waitDone, err: stopErr})
+		returned <- err
+	}()
+	select {
+	case err := <-returned:
+		if !errors.Is(err, stopErr) {
+			t.Fatalf("supervise error = %v, want %v", err, stopErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("supervise blocked after termination failure")
 	}
 }

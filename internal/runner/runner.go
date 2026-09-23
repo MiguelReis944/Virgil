@@ -78,6 +78,10 @@ func Run(ctx context.Context, spec RunSpec) (RunResult, error) {
 	if err != nil {
 		return RunResult{RunID: runID}, err
 	}
+	return supervise(ctx, spec, runID, proc)
+}
+
+func supervise(ctx context.Context, spec RunSpec, runID string, proc Process) (RunResult, error) {
 	done := make(chan ProcessResult, 1)
 	go func() { done <- proc.Wait() }()
 
@@ -102,7 +106,7 @@ func Run(ctx context.Context, spec RunSpec) (RunResult, error) {
 	}
 	if stopped != StopNone {
 		if err := proc.Terminate(context.Background()); err != nil {
-			return RunResult{RunID: runID, ExitCode: proc.Wait().ExitCode, Stopped: stopped}, err
+			return RunResult{RunID: runID, ExitCode: -1, Stopped: stopped}, err
 		}
 		result = proc.Wait()
 	}

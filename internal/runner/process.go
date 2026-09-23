@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/MiguelReis944/Virgil/internal/telemetry"
 )
@@ -30,13 +31,15 @@ type platformProcess interface {
 }
 
 type ownedProcess struct {
-	cmd      *exec.Cmd
-	platform platformProcess
-	done     chan struct{}
-	result   ProcessResult
-	termDone chan struct{}
-	termErr  error
-	termOnce sync.Once
+	cmd       *exec.Cmd
+	platform  platformProcess
+	done      chan struct{}
+	result    ProcessResult
+	termDone  chan struct{}
+	termErr   error
+	termOnce  sync.Once
+	closeErr  error
+	closeOnce sync.Once
 }
 
 // Start launches the child in an operating-system process group or job object.
@@ -65,14 +68,22 @@ func Start(ctx context.Context, spec RunSpec) (Process, error) {
 	if err != nil {
 		return nil, err
 	}
+	return newOwnedProcess(cmd, platform), nil
+}
+
+func newOwnedProcess(cmd *exec.Cmd, platform platformProcess) *ownedProcess {
 	proc := &ownedProcess{cmd: cmd, platform: platform, done: make(chan struct{}), termDone: make(chan struct{})}
 	go func() {
 		err := cmd.Wait()
-		closeErr := platform.close()
-		proc.result = ProcessResult{ExitCode: cmd.ProcessState.ExitCode(), Err: errors.Join(err, closeErr)}
+		proc.closePlatform()
+		proc.result = ProcessResult{ExitCode: cmd.ProcessState.ExitCode(), Err: errors.Join(err, proc.closeErr)}
 		close(proc.done)
 	}()
-	return proc, nil
+	return proc
+}
+
+func (p *ownedProcess) closePlatform() {
+	p.closeOnce.Do(func() { p.closeErr = p.platform.close() })
 }
 
 func childEnvironment(spec RunSpec, runID string) []string {
@@ -110,8 +121,27 @@ func (p *ownedProcess) Wait() ProcessResult {
 
 func (p *ownedProcess) Terminate(ctx context.Context) error {
 	p.termOnce.Do(func() {
-		p.termErr = p.platform.terminate(ctx, p.done)
-		<-p.done
+		terminateErr := p.platform.terminate(ctx, p.done)
+		if terminateErr != nil {
+			// Closing the job or killing the process group is a second tree-level
+			// attempt. Kill the root as well so the owned Wait goroutine can reap it.
+			p.closePlatform()
+			killErr := p.cmd.Process.Kill()
+			if errors.Is(killErr, os.ErrProcessDone) {
+				killErr = nil
+			}
+			timer := time.NewTimer(3 * time.Second)
+			defer timer.Stop()
+			select {
+			case <-p.done:
+				p.termErr = errors.Join(terminateErr, p.closeErr, killErr)
+			case <-timer.C:
+				p.termErr = errors.Join(terminateErr, p.closeErr, killErr, errors.New("process reap timed out"))
+			}
+		} else {
+			<-p.done
+			p.termErr = p.closeErr
+		}
 		close(p.termDone)
 	})
 	<-p.termDone
