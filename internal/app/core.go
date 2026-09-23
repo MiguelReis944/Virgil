@@ -258,9 +258,11 @@ func buildHandlerWithControl(cfg config.Config, configPath string, db, readDB *s
 	}
 	var recorder gateway.EventRecorder = journal
 	var control *executions.HTTPHandler
+	var executionAuth gateway.ExecutionAuthenticator
 	if credential != nil {
 		registry := executions.NewRegistry(journal)
 		control = executions.NewHTTPHandler(*credential, registry, journal)
+		executionAuth = registry
 	}
 	if cfg.ControlPlane.Enabled {
 		recorder = destinationRecorder{journal: journal, destination: "controlplane"}
@@ -271,6 +273,7 @@ func buildHandlerWithControl(cfg config.Config, configPath string, db, readDB *s
 		ConfigPath:        configPath,
 		DashboardPassword: cfg.Dashboard.Password,
 		Control:           control,
+		ExecutionAuth:     executionAuth,
 	})
 	if err != nil {
 		journal.Close()

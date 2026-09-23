@@ -2,19 +2,118 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/MiguelReis944/Virgil/internal/config"
+	"github.com/MiguelReis944/Virgil/internal/controlauth"
 	"github.com/MiguelReis944/Virgil/internal/executions"
 	"github.com/MiguelReis944/Virgil/internal/storage"
 )
+
+func TestCoreBindsGatewayRequestsToRegisteredExecution(t *testing.T) {
+	var upstreamCalls atomic.Int64
+	var upstreamKey atomic.Value
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls.Add(1)
+		upstreamKey.Store(r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"synthetic","model":"fixture-model","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1}}`))
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "virgil.db")
+	db, err := storage.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	readDB, err := storage.OpenReadPool(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer readDB.Close()
+	credential, err := controlauth.LoadOrCreate(filepath.Join(dir, "control.token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CORE_TEST_PROVIDER_KEY", "configured-provider-key")
+	cfg := config.Config{Providers: map[string]config.ProviderConfig{
+		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model", APIKeyEnv: "CORE_TEST_PROVIDER_KEY", Local: true},
+	}}
+	handler, journal, _, err := buildHandlerWithControl(cfg, filepath.Join(dir, "virgil.toml"), db, readDB, &credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+
+	register := httptest.NewRequest(http.MethodPost, "/api/executions", strings.NewReader(`{"run_id":"bound_run"}`))
+	register.Header.Set("Authorization", "Bearer "+credential.Bearer())
+	registration := httptest.NewRecorder()
+	handler.ServeHTTP(registration, register)
+	if registration.Code != http.StatusCreated {
+		t.Fatalf("registration status=%d body=%s", registration.Code, registration.Body.String())
+	}
+	var execution executions.Registration
+	if err := json.Unmarshal(registration.Body.Bytes(), &execution); err != nil {
+		t.Fatal(err)
+	}
+	if execution.RunID != "bound_run" || execution.RunToken == "" {
+		t.Fatalf("invalid registration: run=%q has_token=%t", execution.RunID, execution.RunToken != "")
+	}
+
+	chat := func(token string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"fixture-model","messages":[{"role":"user","content":"synthetic"}]}`))
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		req.Header.Set("X-Virgil-Run-ID", "forged_run")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		return response
+	}
+	for _, token := range []string{"", "invalid-run-token"} {
+		if response := chat(token); response.Code != http.StatusUnauthorized || upstreamCalls.Load() != 0 {
+			t.Fatalf("token %q: status=%d provider calls=%d", token, response.Code, upstreamCalls.Load())
+		}
+	}
+	response := chat(execution.RunToken)
+	if response.Code != http.StatusOK || response.Header().Get("X-Virgil-Run-ID") != execution.RunID || upstreamCalls.Load() != 1 {
+		t.Fatalf("valid token: status=%d run=%q calls=%d body=%s", response.Code, response.Header().Get("X-Virgil-Run-ID"), upstreamCalls.Load(), response.Body.String())
+	}
+	if got := upstreamKey.Load(); got != "Bearer configured-provider-key" {
+		t.Fatalf("upstream credential=%v", got)
+	}
+
+	toolResult := func(token string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/tool-results", strings.NewReader(`{"run_id":"forged_run","tool_call_id":"call_1","tool_name":"lookup","status":"success"}`))
+		if token != "" {
+			req.Header.Set("X-Virgil-App-Token", token)
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		return response
+	}
+	for _, token := range []string{"", "invalid-run-token"} {
+		if response := toolResult(token); response.Code != http.StatusUnauthorized {
+			t.Fatalf("tool token %q: status=%d body=%s", token, response.Code, response.Body.String())
+		}
+	}
+	if response := toolResult(execution.RunToken); response.Code != http.StatusNoContent {
+		t.Fatalf("valid tool token: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
 
 func TestCoreOptionsRejectsInvalidPanelURLs(t *testing.T) {
 	for _, panelURL := range []string{
