@@ -6,13 +6,14 @@ Status: approved direction, 2026-09-23.
 
 The first release is a local circuit breaker for AI agents. Its primary outcome is not another observability dashboard: Virgil must reject an unsafe or over-budget model call and terminate the process tree that owns the execution. It runs on one computer, requires no account or remote service, and keeps SQLite as its local source of truth.
 
-The user-facing entry point is:
+The product has two user-facing entry points:
 
 ```text
-virgil run --config virgil.toml -- <command> [args...]
+virgil
+virgil run -- <command> [args...]
 ```
 
-This command starts an embedded loopback gateway, starts the child only after that gateway is ready, injects the execution identity and gateway connection into the child, supervises the complete process tree, and shuts the gateway down after the child exits. The standalone `virgil serve` command remains available for development and manually integrated applications, but only `virgil run` promises process termination after a policy block.
+`virgil` starts one persistent local product containing the API gateway, configuration UI, execution dashboard, policy engine, and SQLite storage on the same loopback port, then opens the panel in the browser. `virgil run` connects to that local core, registers a supervised execution, injects its identity and gateway connection, and supervises the complete process tree. The core remains running after the child exits, so history and configuration remain available in the panel. The existing `serve` spelling remains as a compatibility alias.
 
 The release excludes LAN access, multi-user administration, Control Plane behavior, MCP tool interception, prompt management, evaluations, and enterprise identity. Those are separate product decisions. The README and setup UI must not present them as part of this release.
 
@@ -20,83 +21,87 @@ The release excludes LAN access, multi-user administration, Control Plane behavi
 
 A release candidate is complete when all of these statements are true:
 
-1. One command starts a supervised application without requiring a separately running gateway.
-2. Every model call accepted by the embedded gateway is authenticated and bound to exactly one `run_id`.
+1. One command starts the local core and opens the panel; a second explicit command starts a supervised application through that core.
+2. Every supervised model call accepted by the local core is authenticated and bound to exactly one `run_id`.
 3. A deterministic policy block rejects the provider call, records the block, and terminates the supervised process tree.
 4. The behavior works on Windows, Linux, and macOS, including descendant processes.
-5. A gateway startup failure prevents the child from starting. A gateway failure during execution terminates the child.
+5. An unavailable core prevents the child from starting. Loss of the authenticated control connection during execution terminates the child.
 6. Provider credentials are never injected into the child unless the user explicitly supplies one through `--env`; the normal path gives the child only the short-lived run token.
 7. The terminal and dashboard explain what policy fired, its threshold, the observed value, and the resulting process state.
 8. Existing standalone proxy, JSON/SSE forwarding, local SQLite, privacy defaults, and budget accounting continue to pass their tests.
 
 ## Command contract
 
+`virgil` accepts:
+
+```text
+virgil [--config virgil.toml] [--env-file .env] [--no-open]
+```
+
+It starts the API and panel on the configured loopback address. Unless `--no-open` is supplied, it opens `/dashboard` after readiness. This follows the useful OmniRoute convention of one local process, one canonical port, and browser-first configuration without copying OmniRoute's routing-focused information architecture.
+
 `virgil run` accepts:
 
 ```text
 virgil run \
-  --config virgil.toml \
-  [--env-file .env] \
+  [--address http://127.0.0.1:8787] \
   [--run-id run_example] \
   [--deadline 30m] \
   [--env KEY=VALUE,KEY2=VALUE2] \
   -- command arg1 arg2
 ```
 
-`--config` defaults to `virgil.toml`. `--env-file` defaults to `.env` and follows the same non-overwriting rules as `serve`. `--run-id` is optional and must pass the existing run ID validation. A generated ID is used otherwise. `--deadline` remains a hard wall-clock limit. `--env` remains an explicit escape hatch for child-specific variables.
+`--address` selects the running local core and must resolve to loopback. `--run-id` is optional and must pass the existing run ID validation. A generated ID is used otherwise. `--deadline` remains a hard wall-clock limit. `--env` remains an explicit escape hatch for child-specific variables.
 
-The existing `--gateway` option is removed from the primary flow. If compatibility is retained temporarily, it is renamed `--external-gateway` and explicitly described as unsupervised: an external gateway cannot signal the local Runner to terminate the child. It must not be the default.
+The existing `--gateway` option becomes `--address`. It accepts only a trusted loopback Virgil core implementing the circuit-break control protocol.
 
 On startup, the command prints only non-secret information:
 
 ```text
 Virgil supervising run_abcd
-Gateway: http://127.0.0.1:<ephemeral-port>/v1
-Dashboard: http://127.0.0.1:<ephemeral-port>/dashboard
+Gateway: http://127.0.0.1:8787/v1
+Panel: http://127.0.0.1:8787/dashboard/executions/run_abcd
 ```
 
 On exit it prints a structured summary with `run_id`, final state, exit code, elapsed time, provider calls, tokens, recorded cost, and policy block details when present. It never prints the run token, provider credential, prompt, response, or raw tool data.
 
 ## Runtime architecture
 
-The command owns a `runtime.Supervisor` composed of four units:
+The persistent core and Runner share a circuit-break protocol composed of five units:
 
 | Unit | Responsibility |
 |---|---|
-| `runtime.LocalGateway` | Open `127.0.0.1:0`, build the existing gateway handler, serve it, expose readiness and report unexpected exit. |
-| `runtime.ExecutionRegistry` | Create one execution identity, authenticate its traffic, persist lifecycle transitions, and provide a one-shot circuit-break signal. |
+| `runtime.LocalCore` | Serve the API gateway and panel on one configured loopback port and own storage, policy, and execution registration. |
+| `runtime.ExecutionRegistry` | Register execution identities, authenticate traffic, persist lifecycle transitions, and publish one-shot circuit-break signals. |
 | `runner.Process` | Start the root process in an operating-system process group or job object and terminate the whole tree. |
-| `runtime.Supervisor` | Order startup and shutdown, race child exit against deadline, circuit break, context cancellation, and gateway failure, then persist the final state. |
+| `runner.ControlClient` | Authenticate to the local core, register and finish executions, and hold the blocking signal stream. |
+| `runtime.Supervisor` | Order registration and process startup, race child exit against deadline, circuit break, cancellation, and control-connection loss, then report the final state. |
 
-The dependency direction is `cmd/virgil -> internal/runtime -> internal/gateway + internal/runner + internal/storage`. The gateway does not import the runner. It reports a typed policy-block notification through an injected callback. This keeps HTTP decisions independent from process management.
+The core dependency direction is `cmd/virgil -> internal/runtime -> internal/gateway + internal/storage`. The Runner depends on `internal/runner` and its small control client. The gateway never imports process management. It publishes typed policy-block notices to the execution registry, which delivers them through the authenticated local control protocol.
 
 Startup order:
 
-1. Load and validate configuration and `.env`.
-2. Open SQLite write and read pools and apply migrations.
-3. Generate or validate `run_id` and generate a 32-byte random run token.
-4. Insert the execution as `starting`.
-5. Bind a loopback listener on an ephemeral port.
-6. Build the policy engine and authenticated gateway handler.
-7. Start serving and verify readiness through the bound listener.
-8. Start the child process tree with the injected environment.
-9. Transition the execution to `running`.
+1. Load the local core address and its installation control credential.
+2. Generate or validate `run_id`.
+3. Register the execution and receive a random run token plus a single-use signal token.
+4. Open the authenticated signal stream and require its readiness event.
+5. Start the child process tree with the injected run token and gateway environment.
+6. Mark the execution `running` through the control API.
 
 Shutdown order:
 
 1. Select exactly one terminal cause.
 2. If the child is still running, terminate its complete process tree.
 3. Wait until the root process has been reaped.
-4. Stop accepting new gateway requests and allow in-flight event persistence for up to five seconds.
-5. Persist the terminal execution state.
-6. Close the journal and database pools.
-7. Print the execution summary and return the appropriate exit code.
+4. Report the terminal execution state to the core.
+5. Close the signal stream.
+6. Print the execution summary returned by the core and return the appropriate exit code.
 
-The supervisor owns these resources and closes them in reverse creation order. Partial startup failures follow the same cleanup path. The child never starts if the listener, database, handler, or policy engine cannot be created.
+The supervisor owns the process and control connection and closes them in reverse creation order. Partial startup failures follow the same cleanup path. The child never starts if registration or signal-stream readiness fails.
 
 ## Execution identity and authentication
 
-Each embedded gateway accepts one execution identity:
+The persistent execution registry accepts multiple sequential or concurrent local execution identities:
 
 ```go
 type ExecutionIdentity struct {
@@ -105,15 +110,15 @@ type ExecutionIdentity struct {
 }
 ```
 
-The plaintext run token exists only in supervisor memory and the child environment. SQLite stores neither the token nor its hash because it is not needed after the process ends. `TokenHash` is held in memory to prevent accidental logging of the plaintext token. Verification hashes the supplied token and compares fixed-size values with `subtle.ConstantTimeCompare`.
+The plaintext run token is returned once to the Runner and exists only in Runner memory and the child environment. The core stores its SHA-256 hash only while the execution is active and removes it at the terminal transition. Verification hashes the supplied token and compares fixed-size values with `subtle.ConstantTimeCompare`.
 
 For OpenAI-compatible clients, the supervisor injects:
 
 ```text
 VIRGIL_RUN_ID=<run_id>
-VIRGIL_GATEWAY_URL=http://127.0.0.1:<port>
-OPENAI_BASE_URL=http://127.0.0.1:<port>/v1
-OPENAI_API_BASE=http://127.0.0.1:<port>/v1
+VIRGIL_GATEWAY_URL=http://127.0.0.1:8787
+OPENAI_BASE_URL=http://127.0.0.1:8787/v1
+OPENAI_API_BASE=http://127.0.0.1:8787/v1
 OPENAI_API_KEY=<run_token>
 ```
 
@@ -122,6 +127,17 @@ The gateway treats `Authorization: Bearer <run_token>` as local authentication, 
 `VIRGIL_RUN_ID`, `VIRGIL_GATEWAY_URL`, and `VIRGIL_RUN_TOKEN` are also injected for explicit integrations. `/v1/tool-results` accepts the same run token in `X-Virgil-App-Token` and forces the bound run ID. The legacy global `VIRGIL_LOCAL_APP_TOKEN` remains available only to standalone `serve` mode.
 
 The first circuit-breaker release supports OpenAI-compatible client traffic. It must stop injecting `ANTHROPIC_BASE_URL` until the gateway exposes a compatible inbound `/v1/messages` route. Provider adapters may still send outbound Anthropic Messages after receiving an OpenAI-compatible request.
+
+The core creates `data/control.token` with mode `0600` on first start. `virgil run` reads this installation-local credential to call four loopback-only control endpoints:
+
+```text
+POST /api/executions
+GET  /api/executions/{run_id}/signals
+POST /api/executions/{run_id}/running
+POST /api/executions/{run_id}/finish
+```
+
+The control credential is sent as a bearer token and compared in constant time. Registration returns the plaintext run token and a separate single-use signal token. The signal endpoint uses SSE, emits `ready` before the child may start, emits at most one `circuit_break` event, sends heartbeat comments every fifteen seconds, and closes after a terminal transition. A disconnected signal stream makes the Runner fail closed and terminate the process tree. Browser handlers never accept the control credential or run token.
 
 ## Policy block notification
 
@@ -143,7 +159,7 @@ type PolicyBlockNotifier interface {
 }
 ```
 
-The embedded runtime supplies a notifier backed by `sync.Once` and a buffered channel of size one. Standalone mode supplies no notifier and retains its current behavior.
+The execution registry supplies a notifier backed by `sync.Once` and a buffered subscriber channel of size one for each active run. Unsupervised API calls have no subscriber and retain request-blocking behavior without claiming process termination.
 
 When `Preflight` returns `block`, the handler performs this order:
 
@@ -226,7 +242,9 @@ Transitions are conditional: `starting -> running -> terminal`, with `starting -
 
 ## Dashboard and terminal experience
 
-The dashboard gains an Executions view ordered by start time. Each row shows:
+The panel is the primary product shell. API and panel share the canonical origin. Persistent navigation contains Overview, Executions, Protections, Providers, Usage, Health, and Settings. The initial setup wizard becomes the empty-state experience inside this shell instead of a visually separate page. Following OmniRoute's useful onboarding pattern, provider setup and copyable integration values are visible in the panel; Virgil keeps its own protection-first hierarchy and does not add routing combos or unrelated provider-marketplace features.
+
+The Executions view is ordered by start time. Each row shows:
 
 - execution ID;
 - current or terminal state;
@@ -237,7 +255,7 @@ The dashboard gains an Executions view ordered by start time. Each row shows:
 
 The execution detail page shows its event timeline and a prominent circuit-break card. The card uses exact language: “Request blocked” and “Process tree terminated.” If termination failed, it displays “Termination failed” and never presents the execution as protected.
 
-The embedded dashboard keeps the existing dashboard-password session authentication. The run token authenticates API traffic only and is never accepted as a dashboard password. When no dashboard password is configured, the existing open loopback behavior remains and the CLI prints a warning. No run token appears in a query string, log, HTML page, or persisted cookie.
+The panel keeps the existing dashboard-password session authentication. Run and control tokens authenticate API traffic only and are never accepted as a dashboard password. When no dashboard password is configured, the existing open loopback behavior remains and the core prints a warning. No token appears in a query string, log, HTML page, or persisted cookie.
 
 The CLI summary is part of the acceptance contract and is tested independently from visual templates. Dashboard query code gets package tests against a temporary migrated SQLite database; the current dashboard has no test coverage and cannot remain that way after execution state is added.
 
@@ -250,7 +268,7 @@ The CLI summary is part of the acceptance contract and is tested independently f
 | Listener or handler failure | Do not start child. |
 | Child start failure | Persist `failed`, stop gateway, return nonzero. |
 | Policy persistence failure | Reject call, notify circuit break, terminate child, log normalized code. |
-| Embedded gateway exits unexpectedly | Terminate child and persist `gateway_failed`. |
+| Signal stream or local core connection is lost | Terminate child, return nonzero, and persist `gateway_failed` when connectivity returns. |
 | Deadline reached | Terminate tree and persist `deadline`. |
 | User interrupt | Terminate tree and persist `interrupted`. |
 | Child exits normally | Persist `completed` with its exit code. |
@@ -262,10 +280,10 @@ The first terminal cause wins through `sync.Once`; shutdown errors are joined to
 
 ## Security and privacy constraints
 
-- Bind the embedded gateway to an operating-system-assigned loopback port only.
+- Bind the persistent API and panel core to the configured loopback address only.
 - Generate the run token with `crypto/rand`; use at least 32 bytes.
 - Never log, persist, return, or place the token in a URL.
-- Do not accept a client-provided run ID in embedded mode.
+- For authenticated supervised traffic, replace every client-provided run ID with the identity registered by the core.
 - Do not pass configured provider credentials to the child.
 - Keep prompts and responses disabled unless the existing explicit capture settings enable them.
 - Keep raw tool arguments disabled.
@@ -282,7 +300,7 @@ Unit tests cover token verification, run ID binding, one-shot notifications, lif
 
 Integration tests use a synthetic child executable built from `tests/fixtures/supervised-child`. It can issue authenticated requests, deliberately exceed a call limit, spawn a descendant, and write PID markers to a temporary directory. Tests verify:
 
-1. The embedded gateway is ready before the first child request.
+1. Core registration and the signal stream are ready before the first child request.
 2. The child sees the expected environment without provider credentials.
 3. An invalid run token returns `401` and does not increment policy counters.
 4. A forged run ID is replaced by the bound identity.
@@ -290,7 +308,7 @@ Integration tests use a synthetic child executable built from `tests/fixtures/su
 6. Exactly one `policy_block` event and one `blocked` execution are stored.
 7. Normal exit stores `completed` and preserves the child's exit code.
 8. Deadline and interrupt produce their distinct states.
-9. Unexpected gateway exit terminates the tree.
+9. Loss of the core signal connection terminates the tree.
 10. Restart recovery marks abandoned active executions `interrupted`.
 
 CI runs `go test -race -timeout 180s ./...` and `go vet ./...` on Ubuntu, Windows, and macOS. Process tests that require OS-specific primitives must run on their native platform and may not be replaced solely by mocked unit tests.
@@ -303,7 +321,7 @@ Update README, setup copy, CLI help, and architecture documentation to present V
 
 ### Stage 2: Execution identity
 
-Add short-lived run-token authentication, bind requests to the supervisor-owned run ID, and ensure configured provider credentials remain in the gateway. This stage is independently useful because it prevents another ordinary local client from spending the configured key through an embedded gateway.
+Add the installation control credential and short-lived run-token authentication, bind requests to the supervisor-owned run ID, and ensure configured provider credentials remain in the core. This prevents another ordinary local client from registering executions or spending a configured key.
 
 ### Stage 3: Persistent lifecycle
 
@@ -313,9 +331,9 @@ Add the executions migration, strict transitions, recovery of abandoned states, 
 
 Refactor the Runner into a start/wait/terminate lifecycle and implement native Unix process groups and Windows Job Objects. Prove descendant termination on all supported platforms.
 
-### Stage 5: Embedded gateway supervision
+### Stage 5: Persistent core supervision protocol
 
-Create `runtime.Supervisor`, make it the default `virgil run` path, wire gateway failure and deadlines to termination, and remove the requirement for a separately running gateway.
+Create execution registration, signal, running, and finish endpoints plus `runner.ControlClient`. Make the persistent API-and-panel core the default `virgil` command, open the browser after readiness, and make `virgil run` fail closed when the local core is unavailable.
 
 ### Stage 6: Circuit-break signal
 
@@ -323,7 +341,7 @@ Persist policy blocks, deliver one typed notice to the supervisor, terminate the
 
 ### Stage 7: Action-oriented product experience
 
-Add terminal summaries and dashboard execution views centered on decisions and outcomes rather than generic telemetry. Add dashboard database tests and remove unsupported claims from the UI.
+Make the panel the primary product shell with navigation for Overview, Executions, Protections, Providers, Usage, Health, and Settings. Add terminal summaries as a secondary interface, dashboard database tests, and remove unsupported claims from the UI.
 
 ### Stage 8: Release hardening
 
