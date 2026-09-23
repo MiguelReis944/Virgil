@@ -39,6 +39,7 @@ max_cost_per_day_usd = "10.00"
 # Example provider: OpenAI
 [providers.openai]
 type         = "openai"
+base_url     = "https://api.openai.com/v1"
 model        = "gpt-4o-mini"
 capabilities = ["stream", "tools"]
 # api_key = "${OPENAI_API_KEY}"   # uncomment and set the env var
