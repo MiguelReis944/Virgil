@@ -75,6 +75,9 @@ func RunCore(ctx context.Context, options CoreOptions) error {
 		return err
 	}
 	defer journal.Close()
+	if err := journal.RecoverExecutions(ctx, time.Now().UTC()); err != nil {
+		return fmt.Errorf("recover executions: %w", err)
+	}
 	if cfg.Storage.RetentionDays > 0 {
 		if _, err := journal.Prune(context.Background(), time.Now().AddDate(0, 0, -cfg.Storage.RetentionDays)); err != nil {
 			slog.Warn("retention prune failed; continuing", "error", err)

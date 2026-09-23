@@ -11,6 +11,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/MiguelReis944/Virgil/internal/executions"
+	"github.com/MiguelReis944/Virgil/internal/storage"
 )
 
 func TestCoreOptionsRejectsInvalidPanelURLs(t *testing.T) {
@@ -148,6 +151,91 @@ func TestCoreOptionsServesPanelUntilCancelled(t *testing.T) {
 		}
 	case <-time.After(7 * time.Second):
 		t.Fatal("core did not stop after cancellation")
+	}
+}
+
+func TestRunCoreRecoversAbandonedExecutionsBeforeServing(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	listener.Close()
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "virgil.db")
+	configPath := filepath.Join(dir, "virgil.toml")
+	configText := fmt.Sprintf("[server]\nlisten = %q\n[storage]\npath = %q\n", address, filepath.ToSlash(dbPath))
+	if err := os.WriteFile(configPath, []byte(configText), 0600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, err := storage.NewJournal(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now().UTC().Add(-time.Minute)
+	for _, id := range []string{"starting", "running"} {
+		if err := journal.StartExecution(context.Background(), id, started); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := journal.MarkExecutionRunning(context.Background(), "running"); err != nil {
+		t.Fatal(err)
+	}
+	journal.Close()
+	db.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() { finished <- RunCore(ctx, CoreOptions{ConfigPath: configPath}) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-finished:
+			if err != nil {
+				t.Errorf("core shutdown: %v", err)
+			}
+		case <-time.After(7 * time.Second):
+			t.Error("core did not stop")
+		}
+	})
+	client := &http.Client{Timeout: 100 * time.Millisecond}
+	defer client.CloseIdleConnections()
+	ready := false
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); {
+		response, err := client.Get("http://" + address + "/health")
+		if err == nil {
+			response.Body.Close()
+			ready = response.StatusCode == http.StatusOK
+			if ready {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatal("core did not become ready")
+	}
+
+	checkDB, err := storage.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer checkDB.Close()
+	for _, id := range []string{"starting", "running"} {
+		var state, reason string
+		var endedAt int64
+		err := checkDB.QueryRowContext(context.Background(),
+			"SELECT state, COALESCE(stop_reason, ''), COALESCE(ended_at_unix_ns, 0) FROM executions WHERE run_id=?", id,
+		).Scan(&state, &reason, &endedAt)
+		if err != nil || state != string(executions.StateInterrupted) || reason != "virgil_restart" || endedAt == 0 {
+			t.Fatalf("execution %s: state=%q reason=%q ended=%d err=%v", id, state, reason, endedAt, err)
+		}
 	}
 }
 
