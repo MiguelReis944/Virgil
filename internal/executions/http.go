@@ -158,21 +158,8 @@ func (h *HTTPHandler) Finish(w http.ResponseWriter, r *http.Request) {
 	}
 	result := ExecutionResult{RunID: runID, State: input.State, EndedAt: time.Now().UTC(), ExitCode: input.ExitCode, StopReason: input.StopReason, TerminationStatus: input.TerminationStatus, TerminationErrorCode: input.TerminationCode}
 	if before.State == StateBlocked {
-		switch input.TerminationStatus {
-		case TerminationSucceeded:
-			if input.TerminationCode != "" {
-				http.Error(w, "invalid termination code", http.StatusBadRequest)
-				return
-			}
-			result.State = StateBlocked
-		case TerminationFailed:
-			if input.TerminationCode == "" {
-				http.Error(w, "termination code required", http.StatusBadRequest)
-				return
-			}
-			result.State = StateTerminationFailed
-		default:
-			http.Error(w, "invalid termination status", http.StatusBadRequest)
+		if !blockedFinishResult(input, &result) {
+			http.Error(w, "invalid termination result", http.StatusBadRequest)
 			return
 		}
 	} else if input.State == StateTerminationFailed {
@@ -184,7 +171,22 @@ func (h *HTTPHandler) Finish(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid termination result", http.StatusBadRequest)
 		return
 	}
-	if err := h.registry.Finish(r.Context(), result); err != nil {
+	err = h.registry.Finish(r.Context(), result)
+	if errors.Is(err, ErrInvalidTransition) && before.State != StateBlocked {
+		current, readErr := h.store.Execution(r.Context(), runID)
+		if readErr != nil && !errors.Is(readErr, ErrRunNotFound) {
+			http.Error(w, "execution read failed", http.StatusInternalServerError)
+			return
+		}
+		if readErr == nil && current.State == StateBlocked {
+			if !blockedFinishResult(input, &result) {
+				http.Error(w, "invalid termination result", http.StatusBadRequest)
+				return
+			}
+			err = h.registry.Finish(r.Context(), result)
+		}
+	}
+	if err != nil {
 		if errors.Is(err, ErrInvalidTransition) || errors.Is(err, ErrRunNotFound) {
 			http.Error(w, "invalid transition", http.StatusConflict)
 		} else {
@@ -198,6 +200,25 @@ func (h *HTTPHandler) Finish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeControlJSON(w, http.StatusOK, executionSummary(stored))
+}
+
+func blockedFinishResult(input FinishRequest, result *ExecutionResult) bool {
+	switch input.TerminationStatus {
+	case TerminationSucceeded:
+		if input.TerminationCode != "" {
+			return false
+		}
+		result.State = StateBlocked
+		return true
+	case TerminationFailed:
+		if input.TerminationCode == "" {
+			return false
+		}
+		result.State = StateTerminationFailed
+		return true
+	default:
+		return false
+	}
 }
 
 func validTerminationStatus(status TerminationStatus) bool {

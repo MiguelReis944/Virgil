@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +21,10 @@ import (
 )
 
 func controlFixture(t *testing.T) (*httptest.Server, *executions.Registry, *storage.Journal, string) {
+	return controlFixtureWithStore(t, nil)
+}
+
+func controlFixtureWithStore(t *testing.T, storeFactory func(*storage.Journal) executions.HTTPStore) (*httptest.Server, *executions.Registry, *storage.Journal, string) {
 	t.Helper()
 	dir := t.TempDir()
 	db, err := storage.Open(filepath.Join(dir, "virgil.db"))
@@ -36,7 +42,11 @@ func controlFixture(t *testing.T) (*httptest.Server, *executions.Registry, *stor
 		t.Fatal(err)
 	}
 	registry := executions.NewRegistry(j)
-	h := executions.NewHTTPHandler(credential, registry, j)
+	var store executions.HTTPStore = j
+	if storeFactory != nil {
+		store = storeFactory(j)
+	}
+	h := executions.NewHTTPHandler(credential, registry, store)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/executions", h.Register)
 	mux.HandleFunc("GET /api/executions/{run_id}/signals", h.Signals)
@@ -45,6 +55,22 @@ func controlFixture(t *testing.T) (*httptest.Server, *executions.Registry, *stor
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return server, registry, j, credential.Bearer()
+}
+
+type blockedBetweenReadAndFinish struct {
+	*storage.Journal
+	read   chan struct{}
+	resume chan struct{}
+	once   sync.Once
+}
+
+func (s *blockedBetweenReadAndFinish) Execution(ctx context.Context, runID string) (executions.Execution, error) {
+	row, err := s.Journal.Execution(ctx, runID)
+	s.once.Do(func() {
+		close(s.read)
+		<-s.resume
+	})
+	return row, err
 }
 
 func controlRequest(t *testing.T, method, url, bearer, body string) *http.Response {
@@ -289,6 +315,70 @@ func TestControlBlockedFollowUpPreservesPolicyAndRecordsTerminationOnce(t *testi
 	res.Body.Close()
 	if res.StatusCode == http.StatusOK {
 		t.Fatal("second termination report accepted")
+	}
+}
+
+func TestControlFinishRetriesPolicyBlockBetweenReadAndWrite(t *testing.T) {
+	store := &blockedBetweenReadAndFinish{read: make(chan struct{}), resume: make(chan struct{})}
+	server, _, journal, bearer := controlFixtureWithStore(t, func(j *storage.Journal) executions.HTTPStore {
+		store.Journal = j
+		return store
+	})
+	registerRun(t, server, bearer, "run_race")
+	base := server.URL + "/api/executions/run_race"
+	running := controlRequest(t, http.MethodPost, base+"/running", bearer, `{}`)
+	running.Body.Close()
+	if running.StatusCode != http.StatusNoContent {
+		t.Fatalf("running status=%d", running.StatusCode)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/finish", strings.NewReader(`{"state":"failed","exit_code":137,"termination_status":"succeeded"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	result := make(chan error, 1)
+	go func() {
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			result <- err
+			return
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			result <- fmt.Errorf("finish status=%d", response.StatusCode)
+			return
+		}
+		result <- nil
+	}()
+	select {
+	case <-store.read:
+	case <-ctx.Done():
+		t.Fatal("finish did not read starting state")
+	}
+	defer func() {
+		select {
+		case <-store.resume:
+		default:
+			close(store.resume)
+		}
+	}()
+	if err := journal.BlockExecution(context.Background(), executions.PolicyBlockNotice{RunID: "run_race", Policy: "max_requests", Reason: "limit", Attempt: 2, Threshold: 1, OccurredAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	close(store.resume)
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("finish did not complete")
+	}
+	stored, err := journal.Execution(context.Background(), "run_race")
+	if err != nil || stored.State != executions.StateBlocked || stored.TerminationStatus != executions.TerminationSucceeded || stored.Policy != "max_requests" {
+		t.Fatalf("stored=%+v err=%v", stored, err)
 	}
 }
 
