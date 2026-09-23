@@ -47,3 +47,15 @@ func TestRegistryDuplicateModelUsesCompositeKey(t *testing.T) {
 		t.Fatal("composite key b:same missing")
 	}
 }
+
+func TestRegistryAllowsExplicitLocalOllama(t *testing.T) {
+	registry, err := NewRegistry(config.Config{Providers: map[string]config.ProviderConfig{
+		"ollama": {Type: "ollama", BaseURL: "http://localhost:11434/v1", Model: "llama3", Local: true},
+	}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registry["llama3"].Provider != "ollama" {
+		t.Fatalf("ollama registration missing: %#v", registry)
+	}
+}

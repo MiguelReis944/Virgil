@@ -89,6 +89,7 @@ func handleSetupPost(w http.ResponseWriter, r *http.Request, configPath string, 
 		p := config.ProviderConfig{}
 		if i < len(types) {
 			p.Type = strings.TrimSpace(types[i])
+			p.Local = p.Type == "ollama"
 		}
 		if i < len(baseURLs) {
 			p.BaseURL = strings.TrimSpace(baseURLs[i])

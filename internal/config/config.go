@@ -109,8 +109,8 @@ func Load(path string, _ func(string) string) (Config, error) {
 	if err := toml.NewDecoder(bytes.NewReader(raw)).DisallowUnknownFields().Decode(&cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config: %w", err)
 	}
-	if cfg.Privacy.CapturePrompts || cfg.Privacy.CaptureResponses || cfg.Privacy.CaptureToolArguments {
-		return Config{}, fmt.Errorf("content capture is unsupported")
+	if cfg.Privacy.CaptureToolArguments {
+		return Config{}, fmt.Errorf("tool argument capture is unsupported")
 	}
 	switch cfg.Server.LogLevel {
 	case "debug", "info", "warn", "error":

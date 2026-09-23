@@ -54,7 +54,7 @@ func NewRegistry(cfg config.Config, client *http.Client) (Registry, error) {
 		}
 		var adapter Adapter
 		switch provider.Type {
-		case "openai", "kimi", "openai-compatible":
+		case "openai", "kimi", "openai-compatible", "ollama":
 			adapter = NewOpenAICompatible(provider.BaseURL, client)
 		case "anthropic":
 			adapter = NewAnthropic(provider.BaseURL, client)

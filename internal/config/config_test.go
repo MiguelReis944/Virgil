@@ -64,10 +64,19 @@ func TestLoadKeepsProviderKeyReferenceLocal(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsContentCaptureAndUnknownOptions(t *testing.T) {
+func TestLoadAllowsOptInPromptAndResponseCapture(t *testing.T) {
+	path := writeConfig(t, "[privacy]\ncapture_prompts = true\ncapture_responses = true\n")
+	cfg, err := Load(path, os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Privacy.CapturePrompts || !cfg.Privacy.CaptureResponses {
+		t.Fatalf("privacy config not loaded: %+v", cfg.Privacy)
+	}
+}
+
+func TestLoadRejectsUnsupportedCaptureAndUnknownOptions(t *testing.T) {
 	for _, body := range []string{
-		"[privacy]\ncapture_prompts = true\n",
-		"[privacy]\ncapture_responses = true\n",
 		"[privacy]\ncapture_tool_arguments = true\n",
 		"[privacy]\nunknown_option = true\n",
 	} {

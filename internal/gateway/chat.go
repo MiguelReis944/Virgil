@@ -19,7 +19,6 @@ import (
 	"github.com/MiguelReis944/Virgil/internal/redaction"
 	"github.com/MiguelReis944/Virgil/internal/storage"
 	"github.com/MiguelReis944/Virgil/internal/telemetry"
-
 )
 
 const maxChatRequest = 1 << 20
@@ -38,6 +37,7 @@ type router struct {
 	installationID string
 	policy         *policies.Engine
 	guardrails     config.GuardrailsConfig
+	privacy        config.PrivacyConfig
 	pricingCfg     config.PricingConfig
 	priceRegistry  *pricing.Registry
 }
@@ -70,7 +70,7 @@ func newRouter(cfg config.Config, client *http.Client, getenv func(string) strin
 		})
 	}
 	priceReg := pricing.NewPriceRegistryFromEntries(priceSources)
-	r := &router{models: make(map[string]route), getenv: getenv, guardrails: cfg.Guardrails, pricingCfg: cfg.Pricing, priceRegistry: priceReg}
+	r := &router{models: make(map[string]route), getenv: getenv, guardrails: cfg.Guardrails, privacy: cfg.Privacy, pricingCfg: cfg.Pricing, priceRegistry: priceReg}
 	registry, err := providers.NewRegistry(cfg, client)
 	if err != nil {
 		return nil, err
@@ -87,18 +87,18 @@ func newRouter(cfg config.Config, client *http.Client, getenv func(string) strin
 }
 
 var errorMessages = map[string]string{
-	"request_too_large":      "Request body exceeds the 1 MiB limit.",
-	"request_timeout":        "The upstream read timed out.",
-	"invalid_request":        "Request body is not valid JSON or is missing required fields.",
-	"model_not_configured":   "The requested model is not configured in this gateway. Check the 'model' field or run 'virgil init' to generate a config.",
-	"unsupported_request":    "The request uses capabilities not supported by this model (e.g. streaming or tools). Check the provider capabilities.",
-	"provider_key_required":  "No API key could be resolved for this provider. Set the env var referenced in the provider's api_key config field.",
-	"invalid_provider_config": "Provider config is invalid. Check the provider base_url and type in virgil.toml.",
-	"trace_unavailable":      "Failed to generate a trace ID.",
-	"run_id_unavailable":     "Failed to resolve or generate a run ID.",
-	"policy_unavailable":     "Policy engine is unavailable. The gateway may still be starting.",
+	"request_too_large":        "Request body exceeds the 1 MiB limit.",
+	"request_timeout":          "The upstream read timed out.",
+	"invalid_request":          "Request body is not valid JSON or is missing required fields.",
+	"model_not_configured":     "The requested model is not configured in this gateway. Check the 'model' field or run 'virgil init' to generate a config.",
+	"unsupported_request":      "The request uses capabilities not supported by this model (e.g. streaming or tools). Check the provider capabilities.",
+	"provider_key_required":    "No API key could be resolved for this provider. Set the env var referenced in the provider's api_key config field.",
+	"invalid_provider_config":  "Provider config is invalid. Check the provider base_url and type in virgil.toml.",
+	"trace_unavailable":        "Failed to generate a trace ID.",
+	"run_id_unavailable":       "Failed to resolve or generate a run ID.",
+	"policy_unavailable":       "Policy engine is unavailable. The gateway may still be starting.",
 	"provider_transport_error": "Could not reach the upstream provider. Check network connectivity and the provider base_url.",
-	"provider_response_error": "The upstream provider returned an unexpected response format.",
+	"provider_response_error":  "The upstream provider returned an unexpected response format.",
 }
 
 func writeAPIError(w http.ResponseWriter, status int, code string) {
@@ -310,19 +310,26 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), 2*time.Second)
 		defer cancel()
 		// Save prompt/response content if the recorder supports it.
-		if cs, ok := router.recorder.(ContentSaver); ok {
+		if cs, ok := router.recorder.(ContentSaver); ok && (router.privacy.CapturePrompts || router.privacy.CaptureResponses) {
 			var promptJSON string
-			var msgHolder struct {
-				Messages json.RawMessage `json:"messages"`
+			if router.privacy.CapturePrompts {
+				var msgHolder struct {
+					Messages json.RawMessage `json:"messages"`
+				}
+				if json.Unmarshal(body, &msgHolder) == nil && len(msgHolder.Messages) > 0 {
+					promptJSON = string(msgHolder.Messages)
+				}
 			}
-			if json.Unmarshal(body, &msgHolder) == nil && len(msgHolder.Messages) > 0 {
-				promptJSON = string(msgHolder.Messages)
+			responseText, errorMessage := "", ""
+			if router.privacy.CaptureResponses {
+				responseText = result.ResponseText
+				errorMessage = result.ErrorBody
 			}
 			_ = cs.SaveContent(ctx, storage.ContentRecord{
 				EventID:      event.EventID,
 				PromptJSON:   promptJSON,
-				ResponseText: result.ResponseText,
-				ErrorMessage: result.ErrorBody,
+				ResponseText: responseText,
+				ErrorMessage: errorMessage,
 				CreatedAtNS:  event.CreatedAt.UnixNano(),
 			})
 		}

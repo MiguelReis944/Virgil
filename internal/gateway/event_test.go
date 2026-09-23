@@ -1,4 +1,4 @@
-﻿package gateway
+package gateway
 
 import (
 	"bytes"
@@ -14,11 +14,17 @@ import (
 )
 
 type captureEvents struct {
-	events []telemetry.Event
+	events  []telemetry.Event
+	content []storage.ContentRecord
 }
 
 func (c *captureEvents) Record(_ context.Context, event telemetry.Event) error {
 	c.events = append(c.events, event)
+	return nil
+}
+
+func (c *captureEvents) SaveContent(_ context.Context, content storage.ContentRecord) error {
+	c.content = append(c.content, content)
 	return nil
 }
 
@@ -56,5 +62,42 @@ func TestGatewayRecordsOneEventAndPreservesTrace(t *testing.T) {
 	}
 	if event.InputTokens == nil || *event.InputTokens != 5 {
 		t.Fatalf("usage=%+v", event)
+	}
+	if len(recorder.content) != 0 {
+		t.Fatal("default privacy settings captured request content")
+	}
+}
+
+func TestGatewayCapturesPromptOnlyWhenEnabled(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"fixture-model","choices":[{"message":{"content":"synthetic response"}}],"usage":{"prompt_tokens":1,"completion_tokens":2}}`))
+	}))
+	defer upstream.Close()
+	db, err := storage.Open(filepath.Join(t.TempDir(), "virgil.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	recorder := &captureEvents{}
+	cfg := config.Config{
+		Privacy: config.PrivacyConfig{CapturePrompts: true},
+		Providers: map[string]config.ProviderConfig{
+			"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Local: true},
+		},
+	}
+	handler, err := NewServer(cfg, Dependencies{DB: db, Client: http.DefaultClient, Recorder: recorder, InstallationID: "install_fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(chatFixture(t)))
+	req.Header.Set("Authorization", "Bearer synthetic-key")
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK || len(recorder.content) != 1 {
+		t.Fatalf("status=%d content=%d", resp.Code, len(recorder.content))
+	}
+	if recorder.content[0].PromptJSON == "" || recorder.content[0].ResponseText != "" {
+		t.Fatalf("unexpected captured content: %+v", recorder.content[0])
 	}
 }
