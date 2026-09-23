@@ -3,6 +3,7 @@ package executions
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -58,7 +59,7 @@ func TestRegistryRegisterGeneratedAndRequestedIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if generated.RunID == "" || len(generated.RunID) > 64 || generated.RunID == requested.RunID {
+	if !strings.HasPrefix(generated.RunID, "run_") || len(generated.RunID) > 64 || generated.RunID == requested.RunID {
 		t.Fatalf("invalid generated run ID: %q", generated.RunID)
 	}
 	if generated.RunToken == requested.RunToken || generated.SignalToken == requested.SignalToken || generated.RunToken == generated.SignalToken {

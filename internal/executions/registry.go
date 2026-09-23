@@ -41,7 +41,7 @@ func (r *Registry) Register(ctx context.Context, requestedRunID string) (Registr
 		if _, err := rand.Read(idBytes); err != nil {
 			return Registration{}, fmt.Errorf("generate run id: %w", err)
 		}
-		runID = hex.EncodeToString(idBytes)
+		runID = "run_" + hex.EncodeToString(idBytes)
 	} else if !validRunID(runID) {
 		return Registration{}, ErrInvalidRunID
 	}
