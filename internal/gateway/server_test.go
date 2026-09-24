@@ -356,7 +356,7 @@ func TestPanelRoutesUseUnifiedNavigationAndSecurityContract(t *testing.T) {
 	}
 
 	for _, path := range []string{
-		"/dashboard", "/dashboard/usage", "/dashboard/session/1", "/dashboard/run/run-test",
+		"/dashboard", "/dashboard/usage", "/dashboard/session/1",
 		"/dashboard/event/event-test", "/dashboard/executions", "/dashboard/protections",
 		"/dashboard/providers", "/dashboard/health", "/dashboard/settings",
 	} {
@@ -380,5 +380,29 @@ func TestPanelRoutesUseUnifiedNavigationAndSecurityContract(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLegacyRunRouteRedirectsToExecutionDetail(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "virgil.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, err := storage.NewJournal(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		journal.Close()
+		_ = db.Close()
+	}()
+	handler, err := NewServer(config.Config{}, Dependencies{DB: db, Recorder: journal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dashboard/run/run-test", nil))
+	if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != "/dashboard/executions/run-test" {
+		t.Fatalf("status=%d location=%q", rec.Code, rec.Header().Get("Location"))
 	}
 }

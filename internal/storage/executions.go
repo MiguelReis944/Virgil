@@ -143,7 +143,12 @@ const executionColumns = `run_id, state, started_at_unix_ns, ended_at_unix_ns,
 
 // Execution returns one durable execution row.
 func (j *Journal) Execution(ctx context.Context, runID string) (executions.Execution, error) {
-	row := j.readDB.QueryRowContext(ctx,
+	return Execution(ctx, j.readDB, runID)
+}
+
+// Execution reads one durable execution from db without starting a Journal writer.
+func Execution(ctx context.Context, db *sql.DB, runID string) (executions.Execution, error) {
+	row := db.QueryRowContext(ctx,
 		`SELECT `+executionColumns+` FROM executions WHERE run_id=?`, runID)
 	got, err := scanExecution(row)
 	if err != nil {
@@ -157,11 +162,37 @@ func (j *Journal) Execution(ctx context.Context, runID string) (executions.Execu
 
 // ListExecutions returns the newest executions first.
 func (j *Journal) ListExecutions(ctx context.Context, limit int) ([]executions.Execution, error) {
-	if limit <= 0 {
+	return j.ListExecutionsFiltered(ctx, ExecutionListFilter{Limit: limit})
+}
+
+// ExecutionListFilter limits the durable execution history returned to the panel.
+type ExecutionListFilter struct {
+	State executions.State
+	Since time.Time
+	Limit int
+}
+
+// ListExecutionsFiltered returns the newest matching executions first.
+func (j *Journal) ListExecutionsFiltered(ctx context.Context, filter ExecutionListFilter) ([]executions.Execution, error) {
+	return ListExecutionsFiltered(ctx, j.readDB, filter)
+}
+
+// ListExecutionsFiltered reads execution history from db without starting a Journal writer.
+func ListExecutionsFiltered(ctx context.Context, db *sql.DB, filter ExecutionListFilter) ([]executions.Execution, error) {
+	if filter.Limit <= 0 {
 		return nil, fmt.Errorf("list executions: limit must be positive")
 	}
-	rows, err := j.readDB.QueryContext(ctx,
-		`SELECT `+executionColumns+` FROM executions ORDER BY started_at_unix_ns DESC, run_id DESC LIMIT ?`, limit)
+	if filter.State != "" && !validExecutionState(filter.State) {
+		return nil, fmt.Errorf("list executions: invalid state")
+	}
+	var since int64
+	if !filter.Since.IsZero() {
+		since = filter.Since.UTC().UnixNano()
+	}
+	rows, err := db.QueryContext(ctx, `SELECT `+executionColumns+` FROM executions
+		WHERE (? = '' OR state = ?) AND (? = 0 OR started_at_unix_ns >= ?)
+		ORDER BY started_at_unix_ns DESC, run_id DESC LIMIT ?`,
+		filter.State, filter.State, since, since, filter.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("list executions: %w", err)
 	}
@@ -178,6 +209,17 @@ func (j *Journal) ListExecutions(ctx context.Context, limit int) ([]executions.E
 		return nil, fmt.Errorf("list executions: %w", err)
 	}
 	return out, nil
+}
+
+func validExecutionState(state executions.State) bool {
+	switch state {
+	case executions.StateStarting, executions.StateRunning, executions.StateCompleted,
+		executions.StateFailed, executions.StateBlocked, executions.StateDeadline,
+		executions.StateInterrupted, executions.StateGatewayFailed, executions.StateTerminationFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 type executionScanner interface{ Scan(...any) error }

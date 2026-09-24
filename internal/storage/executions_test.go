@@ -260,3 +260,55 @@ func TestListExecutionsAndRecovery(t *testing.T) {
 		t.Fatalf("recovery idempotence=%+v err=%v", got, err)
 	}
 }
+
+func TestListExecutionsFilteredByStateAndStartTime(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "virgil.db")
+	db, journal := openJournal(t, path)
+	defer journal.Close()
+	defer db.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, fixture := range []struct {
+		id      string
+		started time.Time
+		state   executions.State
+	}{
+		{id: "old_running", started: now.Add(-3 * time.Hour), state: executions.StateRunning},
+		{id: "recent_running", started: now.Add(-30 * time.Minute), state: executions.StateRunning},
+		{id: "recent_completed", started: now.Add(-15 * time.Minute), state: executions.StateCompleted},
+	} {
+		if err := journal.StartExecution(ctx, fixture.id, fixture.started); err != nil {
+			t.Fatal(err)
+		}
+		if err := journal.MarkExecutionRunning(ctx, fixture.id); err != nil {
+			t.Fatal(err)
+		}
+		if fixture.state == executions.StateCompleted {
+			if err := journal.FinishExecution(ctx, executions.ExecutionResult{
+				RunID: fixture.id, State: fixture.state, EndedAt: fixture.started.Add(time.Minute),
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	rows, err := journal.ListExecutionsFiltered(ctx, ExecutionListFilter{
+		State: executions.StateRunning,
+		Since: now.Add(-time.Hour),
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].RunID != "recent_running" {
+		t.Fatalf("rows=%+v", rows)
+	}
+
+	if _, err := journal.ListExecutionsFiltered(ctx, ExecutionListFilter{State: "unknown", Limit: 10}); err == nil {
+		t.Fatal("invalid state accepted")
+	}
+	if _, err := journal.ListExecutionsFiltered(ctx, ExecutionListFilter{Limit: 0}); err == nil {
+		t.Fatal("invalid limit accepted")
+	}
+}
