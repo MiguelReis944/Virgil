@@ -1,4 +1,4 @@
-﻿package privacy
+package privacy
 
 import (
 	"bytes"
@@ -47,28 +47,22 @@ func TestREADMEPositionsLocalCircuitBreaker(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(readme)
-	targetMarker := "## Approved target (in progress)"
 	historicalMarker := "## Historical proposal and deferred context"
-	if !strings.Contains(content, "## Current functionality") || !strings.Contains(content, targetMarker) || !strings.Contains(content, historicalMarker) {
-		t.Fatal("README must separate current functionality, the approved in-progress target, and historical context")
+	if !strings.Contains(content, "## Current functionality") || !strings.Contains(content, historicalMarker) {
+		t.Fatal("README must separate current functionality from historical context")
 	}
-
-	targetAt := strings.Index(content, targetMarker)
 	historicalAt := strings.Index(content, historicalMarker)
-	if targetAt < 0 || historicalAt <= targetAt {
-		t.Fatal("README target and historical sections are out of order")
+	if historicalAt <= strings.Index(content, "## Current functionality") {
+		t.Fatal("historical context must follow current functionality")
 	}
-	current := strings.ToLower(content[:targetAt])
-	target := strings.ToLower(content[targetAt:historicalAt])
-	for _, currentClaim := range []string{"does not yet receive policy-block signals", "does not yet provide process-tree termination"} {
-		if !strings.Contains(current, currentClaim) {
-			t.Errorf("README does not identify current limitation %q", currentClaim)
+	current := strings.ToLower(content[:historicalAt])
+	for _, required := range []string{"virgil run", "terminates its process tree", "policy block", "executions", "loopback", "secure lan operation is a separate future stage"} {
+		if !strings.Contains(current, required) {
+			t.Errorf("README current product description is missing %q", required)
 		}
 	}
-	for _, targetTerm := range []string{"run tokens", "sse control connection", "full-tree termination", "/dashboard/executions", "not available in the current implementation"} {
-		if !strings.Contains(target, targetTerm) {
-			t.Errorf("README does not mark %q as target behavior", targetTerm)
-		}
+	if strings.Contains(current, "enterprise plan") || strings.Contains(current, "secure lan access is available") {
+		t.Error("README primary path presents deferred capabilities as current")
 	}
 
 	positiveRequirement := regexp.MustCompile(`(?i)\b(?:must|requires?|required|mandatory|depends on)\b[^.!?\n]{0,120}\bcontrol plane\b|\bcontrol plane\b[^.!?\n]{0,120}\b(?:required|mandatory|must be used)\b`)
