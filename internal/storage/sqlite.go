@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MiguelReis944/Virgil/internal/executions"
 	"github.com/MiguelReis944/Virgil/internal/redaction"
 	"github.com/MiguelReis944/Virgil/internal/telemetry"
 )
@@ -172,6 +173,58 @@ func (j *Journal) Record(ctx context.Context, event telemetry.Event) error {
 	return j.Append(ctx, event, nil)
 }
 
+// RecordPolicyBlock atomically stores the canonical block event and transitions
+// the supervised execution. A racing later block rolls back its event.
+func (j *Journal) RecordPolicyBlock(ctx context.Context, event telemetry.Event, notice executions.PolicyBlockNotice) error {
+	if event.ContentCapture || event.InstallationID != j.installationID || event.EventID == "" ||
+		notice.RunID == "" || notice.Policy == "" || notice.Reason == "" || notice.OccurredAt.IsZero() {
+		return errors.New("invalid policy block")
+	}
+	prepared, err := redaction.Prepare(event)
+	if err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(prepared)
+	if err != nil {
+		return err
+	}
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	if j.closed {
+		return errors.New("journal is closed")
+	}
+	tx, err := j.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE executions SET
+		state='blocked', policy=?, policy_reason=?, policy_attempt=?, policy_threshold=?,
+		blocked_call_estimate_usd=NULLIF(?, '')
+		WHERE run_id=? AND state='running'`, notice.Policy, notice.Reason,
+		notice.Attempt, notice.Threshold, notice.BlockedCallEstimateUSD, notice.RunID)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("record policy block rows affected: %w", err)
+	}
+	if count != 1 {
+		var state string
+		if queryErr := tx.QueryRowContext(ctx, "SELECT state FROM executions WHERE run_id=?", notice.RunID).Scan(&state); queryErr == nil && state == string(executions.StateBlocked) {
+			return executions.ErrPolicyBlockRecorded
+		}
+		return fmt.Errorf("record policy block: %w", executions.ErrInvalidTransition)
+	}
+	if _, err := tx.ExecContext(ctx,
+		"INSERT INTO events(event_id, installation_id, created_at_unix_ns, status, payload) VALUES (?, ?, ?, ?, ?)",
+		prepared.EventID, prepared.InstallationID, prepared.CreatedAt.UnixNano(), prepared.Status, encoded); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (j *Journal) appendTransaction(event telemetry.Event, destinations []string) error {
 	if event.ContentCapture || event.InstallationID != j.installationID || event.EventID == "" {
 		return errors.New("invalid event for journal")
@@ -211,11 +264,11 @@ func (j *Journal) appendTransaction(event telemetry.Event, destinations []string
 
 // ContentRecord holds the optional prompt/response content for an event.
 type ContentRecord struct {
-	EventID       string
-	PromptJSON    string
-	ResponseText  string
-	ErrorMessage  string
-	CreatedAtNS   int64
+	EventID      string
+	PromptJSON   string
+	ResponseText string
+	ErrorMessage string
+	CreatedAtNS  int64
 }
 
 // SaveContent stores prompt/response content for an event. Best-effort: errors are logged, not fatal.

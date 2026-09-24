@@ -2,17 +2,23 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/MiguelReis944/Virgil/internal/config"
+	"github.com/MiguelReis944/Virgil/internal/executions"
 	"github.com/MiguelReis944/Virgil/internal/policies"
 	"github.com/MiguelReis944/Virgil/internal/storage"
+	"github.com/MiguelReis944/Virgil/internal/telemetry"
 )
 
 type testExecutionAuth map[string]string
@@ -20,6 +26,156 @@ type testExecutionAuth map[string]string
 func (a testExecutionAuth) ResolveRunToken(token string) (string, bool) {
 	id, ok := a[token]
 	return id, ok
+}
+
+func TestSupervisedPolicyBlockPersistsBeforeCircuitBreakSignal(t *testing.T) {
+	var calls atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"fixture-model","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1}}`))
+	}))
+	defer upstream.Close()
+	db, err := storage.Open(filepath.Join(t.TempDir(), "virgil.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	journal, err := storage.NewJournal(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	registry := executions.NewRegistry(journal)
+	registration, err := registry.Register(context.Background(), "run_policy_block")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.MarkExecutionRunning(context.Background(), registration.RunID); err != nil {
+		t.Fatal(err)
+	}
+	signals, release, err := registry.Subscribe(registration.RunID, registration.SignalToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	engine, err := policies.NewEngine(journal, policies.Limits{MaxCallsPerRun: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Providers: map[string]config.ProviderConfig{
+		"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model", APIKeyEnv: "TEST_PROVIDER_KEY", Local: true},
+	}}
+	h, err := NewServer(cfg, Dependencies{
+		DB: db, Recorder: journal, Policy: engine, InstallationID: journal.InstallationID(),
+		ExecutionAuth: registry, PolicyBlocks: journal, PolicyNotifier: registry,
+		Getenv: func(string) string { return "provider-key" },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := supervisedChat(h, registration.RunToken, ""); got.Code != http.StatusOK {
+		t.Fatalf("first: %d %s", got.Code, got.Body.String())
+	}
+	const blockedRequests = 8
+	start := make(chan struct{})
+	responses := make(chan *httptest.ResponseRecorder, blockedRequests)
+	var requests sync.WaitGroup
+	for range blockedRequests {
+		requests.Add(1)
+		go func() {
+			defer requests.Done()
+			<-start
+			responses <- supervisedChat(h, registration.RunToken, "")
+		}()
+	}
+	close(start)
+	requests.Wait()
+	close(responses)
+	for got := range responses {
+		if got.Code != http.StatusForbidden {
+			t.Fatalf("blocked request: %d %s", got.Code, got.Body.String())
+		}
+	}
+	select {
+	case signal := <-signals:
+		if signal.Kind != executions.SignalCircuitBreak || signal.PolicyBlock.PersistenceFailed {
+			t.Fatalf("signal=%+v", signal)
+		}
+		execution, err := journal.Execution(context.Background(), registration.RunID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if execution.State != executions.StateBlocked {
+			t.Fatalf("state=%s", execution.State)
+		}
+		var count int
+		if err := db.QueryRow("SELECT COUNT(*) FROM events WHERE status='policy_block'").Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("block events=%d", count)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("circuit break signal not delivered")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("provider calls=%d", calls.Load())
+	}
+}
+
+type failingPolicyBlockRecorder struct{}
+
+func (failingPolicyBlockRecorder) RecordPolicyBlock(context.Context, telemetry.Event, executions.PolicyBlockNotice) error {
+	return errors.New("disk unavailable")
+}
+
+type capturePolicyNotifier struct {
+	notices chan executions.PolicyBlockNotice
+}
+
+func (n capturePolicyNotifier) NotifyPolicyBlock(notice executions.PolicyBlockNotice) {
+	n.notices <- notice
+}
+
+func TestPolicyBlockPersistenceFailureStillSignalsSupervisor(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"fixture-model","choices":[]}`))
+	}))
+	defer upstream.Close()
+	db, err := storage.Open(filepath.Join(t.TempDir(), "virgil.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	j, err := storage.NewJournal(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	e, err := policies.NewEngine(j, policies.Limits{MaxCostPerRunUSD: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notifier := capturePolicyNotifier{notices: make(chan executions.PolicyBlockNotice, 1)}
+	cfg := config.Config{Providers: map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model", APIKeyEnv: "KEY", Local: true}}}
+	server, err := NewServer(cfg, Dependencies{DB: db, Recorder: j, Policy: e, InstallationID: j.InstallationID(), ExecutionAuth: testExecutionAuth{"token": "run_failure"}, PolicyBlocks: failingPolicyBlockRecorder{}, PolicyNotifier: notifier, Getenv: func(string) string { return "key" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := supervisedChat(server, "token", "")
+	if resp.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	select {
+	case notice := <-notifier.notices:
+		if !notice.PersistenceFailed {
+			t.Fatalf("notice=%+v", notice)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("missing failure signal")
+	}
 }
 
 func supervisedGateway(t *testing.T, upstreamURL string, key string, auth ExecutionAuthenticator) (http.Handler, *sql.DB) {

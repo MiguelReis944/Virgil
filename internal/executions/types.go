@@ -75,6 +75,7 @@ type PolicyBlockNotice struct {
 	Threshold              int64     `json:"threshold"`
 	BlockedCallEstimateUSD string    `json:"blocked_call_estimate_usd,omitempty"`
 	OccurredAt             time.Time `json:"occurred_at"`
+	PersistenceFailed      bool      `json:"persistence_failed,omitempty"`
 }
 
 // SignalKind identifies the message delivered to a supervised runner.
@@ -103,4 +104,5 @@ var (
 	ErrSignalTokenInvalid   = errors.New("invalid signal token")
 	ErrSignalAlreadyClaimed = errors.New("signal token already claimed")
 	ErrInvalidTransition    = errors.New("invalid execution transition")
+	ErrPolicyBlockRecorded  = errors.New("policy block already recorded")
 )

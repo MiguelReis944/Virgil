@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/MiguelReis944/Virgil/internal/config"
+	"github.com/MiguelReis944/Virgil/internal/executions"
 	"github.com/MiguelReis944/Virgil/internal/policies"
 	"github.com/MiguelReis944/Virgil/internal/pricing"
 	"github.com/MiguelReis944/Virgil/internal/providers"
@@ -41,6 +42,8 @@ type router struct {
 	pricingCfg     config.PricingConfig
 	priceRegistry  *pricing.Registry
 	executionAuth  ExecutionAuthenticator
+	policyBlocks   PolicyBlockRecorder
+	policyNotifier PolicyBlockNotifier
 }
 
 // sharedTransport is optimised for many concurrent calls to the same upstream
@@ -195,6 +198,7 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 	result := providers.Result{Status: "transport_error", UsageSource: "unknown", ErrorCode: "provider_transport_error"}
 	var policyDecision *telemetry.PolicyDecision
 	var reservationID string
+	policyBlockFinalized := false
 	defer func() {
 		slog.Info("← response",
 			"status", result.Status,
@@ -205,6 +209,9 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 			"duration_ms", time.Since(started).Milliseconds(),
 			"error_code", result.ErrorCode,
 		)
+		if policyBlockFinalized {
+			return
+		}
 		u := telemetry.FromResult(result.UsageSource, result.InputTokens, result.OutputTokens, result.CachedTokens)
 		var actualCost, estimatedCost *string
 		var pricingVersion, costCurrency string
@@ -401,7 +408,21 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 			policyDecision = &telemetry.PolicyDecision{Decision: decision.Decision, Reason: decision.Reason, Policy: decision.Policy, Attempt: decision.Attempt, Threshold: decision.Threshold}
 			result.Status = "policy_block"
 			result.ErrorCode = decision.Reason
+			notice, shouldNotify := router.finalizePolicyBlock(req.Context(), telemetry.Attempt{
+				InstallationID: router.installationID, RunID: runID,
+				TraceID: trace.TraceID, SpanID: trace.SpanID,
+				Provider: selected.provider, RequestedModel: selector.Model,
+				UsageSource: "unknown", Status: "policy_block", ErrorCode: decision.Reason,
+				PolicyDecision: policyDecision, StartedAt: started, EndedAt: time.Now(),
+			}, decision, supervised)
+			policyBlockFinalized = true
 			writePolicyBlock(w, decision)
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			if supervised && shouldNotify && router.policyNotifier != nil {
+				router.policyNotifier.NotifyPolicyBlock(notice)
+			}
 			return
 		}
 		reservationID = decision.ReservationID
@@ -434,6 +455,39 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 		result.UsageSource = "unknown"
 		writeAPIError(w, http.StatusBadGateway, "provider_response_error")
 	}
+}
+
+func (router *router) finalizePolicyBlock(ctx context.Context, attempt telemetry.Attempt, decision policies.Decision, supervised bool) (executions.PolicyBlockNotice, bool) {
+	notice := executions.PolicyBlockNotice{
+		RunID: attempt.RunID, Reason: decision.Reason, Policy: decision.Policy,
+		Attempt: decision.Attempt, Threshold: decision.Threshold, OccurredAt: attempt.EndedAt.UTC(),
+		BlockedCallEstimateUSD: router.guardrails.EstimatedCostPerCallUSD,
+	}
+	event, err := telemetry.Build(attempt)
+	if err == nil {
+		event, err = redaction.Prepare(event)
+	}
+	if err == nil {
+		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancel()
+		if supervised {
+			if router.policyBlocks == nil {
+				err = errors.New("supervised policy block recorder unavailable")
+			} else {
+				err = router.policyBlocks.RecordPolicyBlock(persistCtx, event, notice)
+			}
+		} else if router.recorder != nil {
+			err = router.recorder.Record(persistCtx, event)
+		}
+	}
+	if errors.Is(err, executions.ErrPolicyBlockRecorded) {
+		return notice, false
+	}
+	if err != nil {
+		notice.PersistenceFailed = true
+		slog.Error("policy block persistence failed", "code", "policy_block_persistence_failed", "run_id", notice.RunID)
+	}
+	return notice, true
 }
 
 // listModels handles GET /v1/models — returns the models configured in this gateway.

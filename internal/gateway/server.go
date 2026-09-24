@@ -35,6 +35,14 @@ type ContentSaver interface {
 	SaveContent(ctx context.Context, rec storage.ContentRecord) error
 }
 
+type PolicyBlockRecorder interface {
+	RecordPolicyBlock(context.Context, telemetry.Event, executions.PolicyBlockNotice) error
+}
+
+type PolicyBlockNotifier interface {
+	NotifyPolicyBlock(executions.PolicyBlockNotice)
+}
+
 type Dependencies struct {
 	DB                *sql.DB
 	Client            *http.Client
@@ -46,6 +54,8 @@ type Dependencies struct {
 	DashboardPassword string // empty = no auth
 	Control           *executions.HTTPHandler
 	ExecutionAuth     ExecutionAuthenticator // nil keeps standalone gateway behavior
+	PolicyBlocks      PolicyBlockRecorder
+	PolicyNotifier    PolicyBlockNotifier
 }
 
 func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
@@ -62,6 +72,8 @@ func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
 	router.recorder = deps.Recorder
 	router.policy = deps.Policy
 	router.executionAuth = deps.ExecutionAuth
+	router.policyBlocks = deps.PolicyBlocks
+	router.policyNotifier = deps.PolicyNotifier
 	router.installationID = deps.InstallationID
 	if router.installationID == "" {
 		id, err := telemetry.NewID(16)
