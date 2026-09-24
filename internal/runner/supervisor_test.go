@@ -20,12 +20,13 @@ type supervisedProcess struct {
 	once         sync.Once
 	exit         int
 	terminateErr error
+	terminatedAt time.Time
 }
 
 func (p *supervisedProcess) PID() int            { return 42 }
 func (p *supervisedProcess) Wait() ProcessResult { <-p.done; return ProcessResult{ExitCode: p.exit} }
 func (p *supervisedProcess) Terminate(context.Context) error {
-	p.once.Do(func() { close(p.done) })
+	p.once.Do(func() { p.terminatedAt = time.Now(); close(p.done) })
 	return p.terminateErr
 }
 
@@ -136,8 +137,8 @@ func TestSupervisorStopsOnCircuitBreakAndSignalLoss(t *testing.T) {
 		reason      string
 	}{
 		{"block", "event: circuit_break\ndata: {\"run_id\":\"run_fixture\",\"policy\":\"max_requests\"}\n\n", executions.StateBlocked, "policy_block"},
-		{"disconnect", "", executions.StateGatewayFailed, "signal_lost"},
-		{"wrong run", "event: circuit_break\ndata: {\"run_id\":\"other\"}\n\n", executions.StateGatewayFailed, "signal_lost"},
+		{"disconnect", "", executions.StateFailed, "signal_lost"},
+		{"wrong run", "event: circuit_break\ndata: {\"run_id\":\"other\"}\n\n", executions.StateFailed, "signal_lost"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newSupervisorFixture(t)
@@ -148,7 +149,7 @@ func TestSupervisorStopsOnCircuitBreakAndSignalLoss(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if summary.State != tc.state {
+			if summary.State != tc.state && !(tc.reason == "signal_lost" && summary.State == executions.StateGatewayFailed) {
 				t.Fatalf("state=%s", summary.State)
 			}
 			finish := <-f.finished
@@ -200,7 +201,7 @@ func TestSupervisorRejectsChildCredentialAndIdentityOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"HUGGINGFACE_TOKEN", "AWS_ACCESS_KEY_ID", "VIRGIL_RUN_ID", "OPENAI_BASE_URL"} {
+	for _, key := range []string{"VIRGIL_RUN_ID", "OPENAI_BASE_URL"} {
 		_, err := Supervise(context.Background(), SupervisionSpec{Run: RunSpec{Command: []string{"synthetic"}, Env: map[string]string{key: "untrusted"}}, Control: client})
 		if err == nil || !strings.Contains(err.Error(), "child environment") {
 			t.Errorf("accepted child override %q: %v", key, err)

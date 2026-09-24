@@ -91,7 +91,14 @@ func childEnvironment(spec RunSpec, runID string) []string {
 	env := make([]string, 0, len(raw)+len(spec.Env)+5)
 	for _, kv := range raw {
 		key, _, _ := strings.Cut(kv, "=")
-		if credentialEnvKey(key) {
+		configuredProviderCredential := false
+		for _, providerKey := range spec.ProviderCredentialEnv {
+			if strings.EqualFold(key, providerKey) {
+				configuredProviderCredential = true
+				break
+			}
+		}
+		if credentialEnvKey(key) || configuredProviderCredential {
 			continue
 		}
 		env = append(env, kv)

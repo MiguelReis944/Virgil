@@ -28,6 +28,10 @@ type RunSpec struct {
 	// the child is allowed to use must be passed here explicitly.
 	Env map[string]string
 
+	// ProviderCredentialEnv names configured provider credentials to remove
+	// from the inherited environment. Explicit Env entries are still passed.
+	ProviderCredentialEnv []string
+
 	// RunID is the correlation identifier injected as VIRGIL_RUN_ID.
 	// A new random ID is generated when empty.
 	RunID string

@@ -37,6 +37,15 @@ type ControlClient struct {
 	client     *http.Client
 }
 
+type controlStatusError struct{ status int }
+
+func (e controlStatusError) Error() string {
+	return fmt.Sprintf("local core returned status %d", e.status)
+}
+
+// BaseURL is the validated loopback address used for both control and gateway traffic.
+func (c *ControlClient) BaseURL() string { return c.baseURL }
+
 // NewControlClient rejects hostnames and remote addresses before any credential is sent.
 func NewControlClient(address, credential string) (*ControlClient, error) {
 	u, err := url.Parse(address)
@@ -94,7 +103,7 @@ func (c *ControlClient) request(ctx context.Context, method, path string, body a
 func decodeControlResponse(res *http.Response, want int, target any) error {
 	defer res.Body.Close()
 	if res.StatusCode != want {
-		return fmt.Errorf("local core returned status %d", res.StatusCode)
+		return controlStatusError{status: res.StatusCode}
 	}
 	if target == nil {
 		return nil

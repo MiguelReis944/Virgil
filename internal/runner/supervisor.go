@@ -29,7 +29,7 @@ func superviseWithStarter(ctx context.Context, spec SupervisionSpec, start func(
 		return ExecutionSummary{}, errors.New("child command is required")
 	}
 	for key := range spec.Run.Env {
-		if credentialEnvKey(key) || reservedChildEnvKey(key) {
+		if reservedChildEnvKey(key) {
 			return ExecutionSummary{}, fmt.Errorf("child environment cannot set protected variable %q", key)
 		}
 	}
@@ -41,7 +41,7 @@ func superviseWithStarter(ctx context.Context, spec SupervisionSpec, start func(
 	defer closeStream()
 	signals, signalFailures, err := spec.Control.Signals(streamCtx, registration)
 	if err != nil {
-		result := executions.FinishRequest{State: executions.StateGatewayFailed, ExitCode: -1, StopReason: "signal_unavailable", TerminationStatus: executions.TerminationNotRequired}
+		result := executions.FinishRequest{State: executions.StateFailed, ExitCode: -1, StopReason: "signal_unavailable", TerminationStatus: executions.TerminationNotRequired}
 		_, finishErr := finishExecution(ctx, spec.Control, registration.RunID, result)
 		return ExecutionSummary{}, errors.Join(fmt.Errorf("open signal stream: %w", err), finishErr)
 	}
@@ -72,24 +72,17 @@ func superviseWithStarter(ctx context.Context, spec SupervisionSpec, start func(
 	var processResult ProcessResult
 	processAlreadyDone := false
 	var supervisorErr error
-	if err := spec.Control.MarkRunning(ctx, registration.RunID); err != nil {
-		result.State = executions.StateGatewayFailed
-		result.StopReason = "control_unavailable"
-		supervisorErr = fmt.Errorf("mark execution running: %w", err)
-	} else {
+	markCtx, cancelMark := context.WithCancel(ctx)
+	defer cancelMark()
+	markResult := make(chan error, 1)
+	go func() { markResult <- spec.Control.MarkRunning(markCtx, registration.RunID) }()
+	markPending := true
+	for result.State == "" {
 		select {
 		case processResult = <-done:
 			processAlreadyDone = true
-			// A queued policy signal wins if the core already blocked this run.
-			select {
-			case signal, ok := <-signals:
-				if ok && signal.Kind == executions.SignalCircuitBreak {
-					result.State = executions.StateFailed
-					result.StopReason = "policy_block"
-				}
-			default:
-			}
-			if result.StopReason == "" {
+			done = nil
+			if !markPending {
 				result.ExitCode = processResult.ExitCode
 				if processResult.ExitCode == 0 && processResult.Err == nil {
 					result.State = executions.StateCompleted
@@ -102,20 +95,55 @@ func superviseWithStarter(ctx context.Context, spec SupervisionSpec, start func(
 				result.State = executions.StateFailed
 				result.StopReason = "policy_block"
 			} else {
-				result.State = executions.StateGatewayFailed
+				result.State = controlLossState(markPending)
 				result.StopReason = "signal_lost"
 			}
 		case <-signalFailures:
-			result.State = executions.StateGatewayFailed
+			result.State = controlLossState(markPending)
 			result.StopReason = "signal_lost"
 		case <-deadline:
 			result.State = executions.StateDeadline
+			if markPending {
+				result.State = executions.StateFailed
+			}
 			result.StopReason = "deadline"
 		case <-ctx.Done():
 			result.State = executions.StateInterrupted
+			if markPending {
+				result.State = executions.StateFailed
+			}
 			result.StopReason = "interrupted"
+		case err := <-markResult:
+			markPending = false
+			markResult = nil
+			if err != nil {
+				result.State = executions.StateFailed
+				result.StopReason = "control_unavailable"
+				supervisorErr = fmt.Errorf("mark execution running: %w", err)
+				// Cancellation and deadlines take precedence over the request error.
+				select {
+				case <-ctx.Done():
+					result.StopReason = "interrupted"
+					supervisorErr = nil
+				default:
+				}
+				select {
+				case <-deadline:
+					result.StopReason = "deadline"
+					supervisorErr = nil
+				default:
+				}
+			} else if processAlreadyDone {
+				result.ExitCode = processResult.ExitCode
+				if processResult.ExitCode == 0 && processResult.Err == nil {
+					result.State = executions.StateCompleted
+				} else {
+					result.State = executions.StateFailed
+				}
+			}
 		}
 	}
+	cancelMark()
 	if result.StopReason != "" {
 		var termErr error
 		if !processAlreadyDone {
@@ -137,10 +165,26 @@ func superviseWithStarter(ctx context.Context, spec SupervisionSpec, start func(
 		}
 	}
 	summary, finishErr := finishExecution(ctx, spec.Control, registration.RunID, result)
+	if finishErr != nil && result.TerminationStatus == executions.TerminationNotRequired && processAlreadyDone {
+		var statusErr controlStatusError
+		if errors.As(finishErr, &statusErr) && statusErr.status == 400 {
+			// The durable block can precede SSE delivery and the child's exit.
+			result.TerminationStatus = executions.TerminationSucceeded
+			result.StopReason = "policy_block"
+			summary, finishErr = finishExecution(ctx, spec.Control, registration.RunID, result)
+		}
+	}
 	if finishErr != nil {
 		supervisorErr = errors.Join(supervisorErr, fmt.Errorf("finish execution: %w", finishErr))
 	}
 	return summary, supervisorErr
+}
+
+func controlLossState(markPending bool) executions.State {
+	if markPending {
+		return executions.StateFailed
+	}
+	return executions.StateGatewayFailed
 }
 
 func finishExecution(ctx context.Context, client *ControlClient, runID string, result executions.FinishRequest) (ExecutionSummary, error) {

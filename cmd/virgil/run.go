@@ -71,12 +71,19 @@ func runRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	coreAddress = client.BaseURL()
+	var providerCredentialEnv []string
+	for _, provider := range cfg.Providers {
+		if provider.APIKeyEnv != "" {
+			providerCredentialEnv = append(providerCredentialEnv, provider.APIKeyEnv)
+		}
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
 	spec := runner.SupervisionSpec{Run: runner.RunSpec{
-		Command: cmd, Env: extraEnv, RunID: *runID, GatewayURL: coreAddress, Deadline: *deadline,
+		Command: cmd, Env: extraEnv, ProviderCredentialEnv: providerCredentialEnv, RunID: *runID, GatewayURL: coreAddress, Deadline: *deadline,
 	}, Control: client}
 	slog.Info("starting supervised run", "command", cmd[0], "gateway", coreAddress)
 	start := time.Now()
@@ -96,7 +103,13 @@ func runRun(args []string) error {
 }
 
 func runExitCode(summary runner.ExecutionSummary) int {
-	if summary.ExitCode == nil || summary.State != executions.StateCompleted || *summary.ExitCode < 0 {
+	if summary.ExitCode == nil || *summary.ExitCode < 0 {
+		return 1
+	}
+	if *summary.ExitCode != 0 {
+		return *summary.ExitCode
+	}
+	if summary.State != executions.StateCompleted {
 		return 1
 	}
 	return *summary.ExitCode

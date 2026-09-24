@@ -19,8 +19,11 @@ func TestRunChildEnvHelper(t *testing.T) {
 	if os.Getenv("VIRGIL_TEST_CHILD") != "1" {
 		return
 	}
-	if os.Getenv("VIRGIL_RUN_ID") != "run_cli" || os.Getenv("OPENAI_API_KEY") != "run-secret" || os.Getenv("VIRGIL_RUN_TOKEN") != "run-secret" || os.Getenv("PROVIDER_API_KEY") != "" {
+	if os.Getenv("VIRGIL_RUN_ID") != "run_cli" || os.Getenv("OPENAI_API_KEY") != "run-secret" || os.Getenv("VIRGIL_RUN_TOKEN") != "run-secret" || os.Getenv("PROVIDER_API_KEY") != "" || os.Getenv("CUSTOM_AUTH_VAR") != "" || os.Getenv("CUSTOM_KEY") != "explicit-secret" {
 		os.Exit(3)
+	}
+	if got := os.Getenv("OPENAI_BASE_URL"); strings.Contains(got, "//v1") || !strings.HasSuffix(got, "/v1") {
+		os.Exit(5)
 	}
 	if err := os.WriteFile(os.Getenv("VIRGIL_TEST_OUTPUT"), []byte("ready"), 0600); err != nil {
 		os.Exit(4)
@@ -66,12 +69,13 @@ func TestRunCommandUsesConfiguredCoreAndRunToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(dir, "virgil.toml")
-	if err := os.WriteFile(configPath, []byte("[server]\nlisten = \"127.0.0.1:8787\"\n[storage]\npath = \""+filepath.ToSlash(filepath.Join(dir, "virgil.db"))+"\"\n"), 0600); err != nil {
+	if err := os.WriteFile(configPath, []byte("[server]\nlisten = \"127.0.0.1:8787\"\n[storage]\npath = \""+filepath.ToSlash(filepath.Join(dir, "virgil.db"))+"\"\n[providers.synthetic]\ntype = \"openai-compatible\"\napi_key = \"${CUSTOM_AUTH_VAR}\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	output := filepath.Join(dir, "child.txt")
 	t.Setenv("PROVIDER_API_KEY", "provider-secret")
-	err := runRun([]string{"--config", configPath, "--address", strings.TrimPrefix(server.URL, "http://"), "--run-id", "run_cli", "--env", "VIRGIL_TEST_CHILD=1,VIRGIL_TEST_OUTPUT=" + output, "--", os.Args[0], "-test.run=^TestRunChildEnvHelper$"})
+	t.Setenv("CUSTOM_AUTH_VAR", "configured-provider-secret")
+	err := runRun([]string{"--config", configPath, "--address", server.URL + "/", "--run-id", "run_cli", "--env", "VIRGIL_TEST_CHILD=1,VIRGIL_TEST_OUTPUT=" + output + ",CUSTOM_KEY=explicit-secret", "--", os.Args[0], "-test.run=^TestRunChildEnvHelper$"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,5 +97,12 @@ func TestRunExitCodeFailsClosedAfterStoppedChild(t *testing.T) {
 		if code := runExitCode(runner.ExecutionSummary{State: state, ExitCode: &zero}); code == 0 {
 			t.Errorf("state %s returned success", state)
 		}
+	}
+}
+
+func TestRunExitCodePreservesNaturalFailure(t *testing.T) {
+	code := 7
+	if got := runExitCode(runner.ExecutionSummary{State: executions.StateFailed, ExitCode: &code}); got != code {
+		t.Fatalf("exit code = %d, want 7", got)
 	}
 }
