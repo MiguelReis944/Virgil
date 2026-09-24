@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"html/template"
 	"net/http"
+	"strings"
 )
 
 type panelSection string
@@ -225,7 +226,7 @@ func renderPage(w http.ResponseWriter, page pageData, body string, content any) 
 	for _, item := range productNavigation {
 		page.Navigation = append(page.Navigation, navigationItem{Label: item.label, Href: item.href, Current: item.section == page.ActiveSection})
 	}
-	tmpl, err := template.New("panel").Parse(panelLayout + body)
+	tmpl, err := template.New("panel").Funcs(template.FuncMap{"join": func(values []string) string { return strings.Join(values, ", ") }}).Parse(panelLayout + body)
 	if err != nil {
 		return err
 	}

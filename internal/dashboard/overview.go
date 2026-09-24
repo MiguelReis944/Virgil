@@ -30,8 +30,12 @@ const overviewBody = `{{define "content"}}
 <div class="card"><div class="card-label">Recorded cost</div><div class="card-value val-blue">${{.RecordedCost}}</div><div class="card-sub">provider estimate</div></div>
 </div>{{end}}`
 
-func OverviewHandler(db *sql.DB, password string) http.Handler {
+func OverviewHandler(db *sql.DB, password string, providersConfigured ...bool) http.Handler {
 	return requirePanelAuth(password, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if len(providersConfigured) > 0 && !providersConfigured[0] {
+			http.Redirect(w, r, "/dashboard/providers?onboarding=1", http.StatusFound)
+			return
+		}
 		hours := parseIntClamp(r.URL.Query().Get("hours"), 24, 1, 24*31)
 		data, err := queryOverview(r.Context(), db, time.Now().Add(-time.Duration(hours)*time.Hour))
 		if err != nil {

@@ -15,9 +15,11 @@ import (
 
 	"github.com/MiguelReis944/Virgil/internal/config"
 	"github.com/MiguelReis944/Virgil/internal/controlauth"
+	"github.com/MiguelReis944/Virgil/internal/dashboard"
 	"github.com/MiguelReis944/Virgil/internal/executions"
 	"github.com/MiguelReis944/Virgil/internal/gateway"
 	"github.com/MiguelReis944/Virgil/internal/policies"
+	"github.com/MiguelReis944/Virgil/internal/settings"
 	"github.com/MiguelReis944/Virgil/internal/storage"
 	"github.com/MiguelReis944/Virgil/internal/telemetry"
 )
@@ -113,12 +115,31 @@ func RunCore(ctx context.Context, options CoreOptions) error {
 }
 
 func runSetupServer(ctx context.Context, configPath string, openPanel bool) error {
+	if _, err := os.Stat(configPath); errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil && filepath.Dir(configPath) != "." {
+			return fmt.Errorf("create config directory: %w", err)
+		}
+		defaultConfig := []byte("[server]\nlisten = \"127.0.0.1:8787\"\nlog_level = \"info\"\n\n[storage]\npath = \"./data/virgil.db\"\nretention_days = 30\n")
+		if err := os.WriteFile(configPath, defaultConfig, 0o600); err != nil {
+			return fmt.Errorf("create initial config: %w", err)
+		}
+	}
 	mux := http.NewServeMux()
 	setupH := gateway.NewSetupHandler(configPath)
 	mux.HandleFunc("GET /setup", setupH)
 	mux.HandleFunc("POST /setup", setupH)
+	settingsStore := settings.New(configPath)
+	providersHandler := dashboard.ProvidersHandler(settingsStore, "")
+	protectionsHandler := dashboard.ProtectionsHandler(settingsStore, "")
+	mux.Handle("GET /dashboard/providers", providersHandler)
+	mux.Handle("POST /dashboard/providers", providersHandler)
+	mux.Handle("GET /dashboard/protections", protectionsHandler)
+	mux.Handle("POST /dashboard/protections", protectionsHandler)
+	mux.HandleFunc("GET /dashboard", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/dashboard/providers?onboarding=1", http.StatusFound)
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/setup", http.StatusFound)
+		http.Redirect(w, r, "/dashboard/providers?onboarding=1", http.StatusFound)
 	})
 	listener, err := net.Listen("tcp", "127.0.0.1:8787")
 	if err != nil {
@@ -269,6 +290,11 @@ func buildHandlerWithControl(cfg config.Config, configPath string, db, readDB *s
 	if cfg.ControlPlane.Enabled {
 		recorder = destinationRecorder{journal: journal, destination: "controlplane"}
 	}
+	appliedHash, hashErr := settings.HashFile(configPath)
+	var settingsStore *settings.Store
+	if hashErr == nil {
+		settingsStore = settings.New(configPath)
+	}
 	handler, err := gateway.NewServer(cfg, gateway.Dependencies{
 		DB: db, Getenv: os.Getenv,
 		Recorder: recorder, InstallationID: journal.InstallationID(), Policy: engine,
@@ -278,6 +304,8 @@ func buildHandlerWithControl(cfg config.Config, configPath string, db, readDB *s
 		ExecutionAuth:     executionAuth,
 		PolicyBlocks:      journal,
 		PolicyNotifier:    policyNotifier,
+		Settings:          settingsStore,
+		AppliedConfigHash: appliedHash,
 	})
 	if err != nil {
 		journal.Close()

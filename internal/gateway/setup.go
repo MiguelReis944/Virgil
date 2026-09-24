@@ -16,23 +16,13 @@ import (
 // NewSetupHandler returns the /setup handler. Used by the setup-only server
 // when the main config fails to load.
 func NewSetupHandler(configPath string) http.HandlerFunc {
-	return newSetupHandler(configPath)
+	return func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/dashboard/providers?onboarding=1", http.StatusSeeOther)
+	}
 }
 
 func newSetupHandler(configPath string) http.HandlerFunc {
-	tmpl := template.Must(template.New("setup").Funcs(template.FuncMap{
-		"inc": func(i int) int { return i + 1 },
-	}).Parse(setupHTML))
-	return func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			renderSetup(w, configPath, tmpl, "", "")
-		case http.MethodPost:
-			handleSetupPost(w, r, configPath, tmpl)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	}
+	return NewSetupHandler(configPath)
 }
 
 type setupData struct {

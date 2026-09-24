@@ -47,7 +47,11 @@ func NewRegistry(cfg config.Config, client *http.Client) (Registry, error) {
 		if err != nil || base.Host == "" || base.User != nil || (base.Scheme != "http" && base.Scheme != "https") {
 			return nil, errors.New("invalid provider base URL")
 		}
-		if !provider.Local {
+		if provider.Local {
+			if err := validateLocalBaseURL(provider.BaseURL); err != nil {
+				return nil, fmt.Errorf("provider %s: %w", name, err)
+			}
+		} else {
 			if err := validateBaseURL(provider.BaseURL); err != nil {
 				return nil, fmt.Errorf("provider %s: %w", name, err)
 			}
@@ -73,6 +77,12 @@ func NewRegistry(cfg config.Config, client *http.Client) (Registry, error) {
 		}
 	}
 	return registry, nil
+}
+
+// ValidateConfig applies the same provider validation used to construct the gateway.
+func ValidateConfig(cfg config.Config) error {
+	_, err := NewRegistry(cfg, http.DefaultClient)
+	return err
 }
 
 func (r Registration) Validate(body json.RawMessage) error {

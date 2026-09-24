@@ -13,6 +13,7 @@ import (
 	"github.com/MiguelReis944/Virgil/internal/dashboard"
 	"github.com/MiguelReis944/Virgil/internal/executions"
 	"github.com/MiguelReis944/Virgil/internal/policies"
+	"github.com/MiguelReis944/Virgil/internal/settings"
 	"github.com/MiguelReis944/Virgil/internal/storage"
 	"github.com/MiguelReis944/Virgil/internal/telemetry"
 )
@@ -56,6 +57,8 @@ type Dependencies struct {
 	ExecutionAuth     ExecutionAuthenticator // nil keeps standalone gateway behavior
 	PolicyBlocks      PolicyBlockRecorder
 	PolicyNotifier    PolicyBlockNotifier
+	Settings          *settings.Store
+	AppliedConfigHash string
 }
 
 func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
@@ -93,21 +96,39 @@ func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
 		mux.HandleFunc("POST /api/executions/{run_id}/finish", deps.Control.Finish)
 	}
 	if deps.ConfigPath != "" {
-		setupH := newSetupHandler(deps.ConfigPath)
+		setupH := NewSetupHandler(deps.ConfigPath)
 		mux.HandleFunc("GET /setup", setupH)
 		mux.HandleFunc("POST /setup", setupH)
+	}
+	settingsStore := deps.Settings
+	if settingsStore == nil && deps.ConfigPath != "" {
+		settingsStore = settings.New(deps.ConfigPath)
 	}
 	dashLogin := dashboard.LoginHandler(deps.DashboardPassword)
 	mux.HandleFunc("GET /login", dashLogin)
 	mux.HandleFunc("POST /login", dashLogin)
 	mux.HandleFunc("POST /logout", dashboard.LogoutHandler())
-	mux.Handle("GET /dashboard", dashboard.OverviewHandler(deps.DB, deps.DashboardPassword))
+	if settingsStore != nil {
+		mux.Handle("GET /dashboard", dashboard.OverviewHandler(deps.DB, deps.DashboardPassword, len(cfg.Providers) > 0))
+	} else {
+		mux.Handle("GET /dashboard", dashboard.OverviewHandler(deps.DB, deps.DashboardPassword))
+	}
 	mux.Handle("GET /dashboard/executions", dashboard.ExecutionsHandler(deps.DB, deps.DashboardPassword, time.Now))
 	mux.Handle("GET /dashboard/executions/{runID}", dashboard.ExecutionHandler(deps.DB, deps.DashboardPassword))
-	mux.Handle("GET /dashboard/protections", dashboard.PlaceholderHandler(deps.DashboardPassword, "Protections", "protections"))
-	mux.Handle("GET /dashboard/providers", dashboard.PlaceholderHandler(deps.DashboardPassword, "Providers", "providers"))
+	if settingsStore != nil {
+		protectionsHandler := dashboard.ProtectionsHandler(settingsStore, deps.DashboardPassword)
+		providersHandler := dashboard.ProvidersHandler(settingsStore, deps.DashboardPassword)
+		mux.Handle("GET /dashboard/protections", protectionsHandler)
+		mux.Handle("POST /dashboard/protections", protectionsHandler)
+		mux.Handle("GET /dashboard/providers", providersHandler)
+		mux.Handle("POST /dashboard/providers", providersHandler)
+		mux.Handle("GET /dashboard/health", dashboard.HealthHandler(settingsStore, deps.AppliedConfigHash, deps.DashboardPassword))
+	} else {
+		mux.Handle("GET /dashboard/protections", dashboard.PlaceholderHandler(deps.DashboardPassword, "Protections", "protections"))
+		mux.Handle("GET /dashboard/providers", dashboard.PlaceholderHandler(deps.DashboardPassword, "Providers", "providers"))
+		mux.Handle("GET /dashboard/health", dashboard.PlaceholderHandler(deps.DashboardPassword, "Health", "health"))
+	}
 	mux.Handle("GET /dashboard/usage", dashboard.DashboardHandler(deps.DB, deps.DashboardPassword))
-	mux.Handle("GET /dashboard/health", dashboard.PlaceholderHandler(deps.DashboardPassword, "Health", "health"))
 	mux.Handle("GET /dashboard/settings", dashboard.PlaceholderHandler(deps.DashboardPassword, "Settings", "settings"))
 	mux.Handle("GET /dashboard/session/{bucketTS}", dashboard.SessionHandler(deps.DB, deps.DashboardPassword))
 	mux.Handle("GET /dashboard/run/{runID}", dashboard.LegacyRunRedirectHandler(deps.DashboardPassword))
@@ -124,9 +145,16 @@ func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		status := http.StatusOK
 		body := struct {
-			Status  string `json:"status"`
-			Storage string `json:"storage"`
-		}{Status: "ready", Storage: "ready"}
+			Status            string `json:"status"`
+			Storage           string `json:"storage"`
+			AppliedConfigHash string `json:"applied_config_hash,omitempty"`
+			PendingConfigHash string `json:"pending_config_hash,omitempty"`
+			RestartRequired   bool   `json:"restart_required"`
+		}{Status: "ready", Storage: "ready", AppliedConfigHash: deps.AppliedConfigHash}
+		if settingsStore != nil {
+			body.PendingConfigHash, _ = settings.HashFile(settingsStore.Path())
+			body.RestartRequired = body.AppliedConfigHash != "" && body.PendingConfigHash != "" && body.AppliedConfigHash != body.PendingConfigHash
+		}
 		if err := deps.DB.PingContext(r.Context()); err != nil {
 			status = http.StatusServiceUnavailable
 			body.Status = "unready"

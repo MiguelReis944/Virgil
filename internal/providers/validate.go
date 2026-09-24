@@ -7,6 +7,22 @@ import (
 	"net/url"
 )
 
+func validateLocalBaseURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("invalid local base_url")
+	}
+	host := u.Hostname()
+	if host == "localhost" {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("local base_url must use a loopback address")
+	}
+	return nil
+}
+
 // validateBaseURL rejects loopback and link-local base_url values to prevent SSRF.
 // Private RFC-1918 addresses generate a warning but are allowed (self-hosted providers).
 func validateBaseURL(rawURL string) error {
