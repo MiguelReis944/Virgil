@@ -40,7 +40,7 @@ for ((attempt = 0; attempt < 100; attempt++)); do
     echo 'Virgil exited before readiness' >&2
     exit 1
   fi
-  if curl --silent --show-error --noproxy '*' --max-time 1 --output /dev/null "$base_url/health" 2>/dev/null; then
+  if curl --ipv4 --silent --show-error --noproxy '*' --max-time 1 --output /dev/null "$base_url/health" 2>/dev/null; then
     ready=true
     break
   fi
@@ -52,13 +52,36 @@ if [[ "$ready" != true ]]; then
   exit 1
 fi
 
-dashboard=$(curl --fail --silent --show-error --noproxy '*' --max-time 3 "$base_url/dashboard")
+dashboard=$(curl --ipv4 --fail --silent --show-error --noproxy '*' --max-time 3 "$base_url/dashboard")
 [[ "$dashboard" == *Virgil* ]] || { echo 'Virgil did not serve the dashboard' >&2; exit 1; }
-credential=$(cat "$temp_dir/control.token")
+for ((attempt = 0; attempt < 50; attempt++)); do
+  if [[ -s "$temp_dir/control.token" ]]; then
+    break
+  fi
+  sleep 0.1
+done
+if [[ ! -s "$temp_dir/control.token" ]]; then
+  echo 'Virgil did not create control.token' >&2
+  cat "$temp_dir/stderr.log" >&2
+  exit 1
+fi
+credential=$(tr -d '\r\n' < "$temp_dir/control.token")
 run_id="smoke_$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
-response=$(curl --fail --silent --show-error --noproxy '*' --max-time 3 \
-  --request POST --header "Authorization: Bearer $credential" \
-  --header 'Content-Type: application/json' \
-  --data "{\"run_id\":\"$run_id\"}" "$base_url/api/executions")
+response=''
+for ((attempt = 0; attempt < 30; attempt++)); do
+  if response=$(curl --ipv4 --fail --silent --show-error --noproxy '*' --max-time 3 \
+    --request POST --header "Authorization: Bearer $credential" \
+    --header 'Content-Type: application/json' \
+    --data "{\"run_id\":\"$run_id\"}" "$base_url/api/executions" 2>"$temp_dir/register.err"); then
+    break
+  fi
+  sleep 0.1
+done
+if [[ -z "$response" ]]; then
+  echo 'Virgil did not register a synthetic execution' >&2
+  cat "$temp_dir/register.err" >&2
+  cat "$temp_dir/stderr.log" >&2
+  exit 1
+fi
 python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["run_id"] == sys.argv[1] and d["run_token"]' "$run_id" <<< "$response"
 echo 'Virgil installed-binary smoke passed.'
