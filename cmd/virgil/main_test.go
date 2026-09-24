@@ -28,6 +28,7 @@ func TestClassifyCommand(t *testing.T) {
 		{name: "default with flags", args: []string{"--config", "other.toml"}, kind: commandCore, rest: []string{"--config", "other.toml"}},
 		{name: "serve alias", args: []string{"serve"}, kind: commandCore},
 		{name: "run", args: []string{"run", "--", "agent"}, kind: commandRun, rest: []string{"--", "agent"}},
+		{name: "version", args: []string{"version"}, kind: commandVersion},
 		{name: "unknown", args: []string{"wat"}, wantErr: "unknown command: wat"},
 	}
 	for _, tt := range tests {
@@ -46,6 +47,15 @@ func TestClassifyCommand(t *testing.T) {
 				t.Fatalf("kind=%q rest=%v", kind, rest)
 			}
 		})
+	}
+}
+
+func TestVersionCommand(t *testing.T) {
+	if got := versionLine(); got != "virgil dev (commit unknown, built unknown)" {
+		t.Fatalf("versionLine() = %q", got)
+	}
+	if err := run([]string{"version", "unexpected"}); err == nil {
+		t.Fatal("version accepted an unexpected argument")
 	}
 }
 

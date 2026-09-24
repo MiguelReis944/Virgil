@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 
 	"github.com/MiguelReis944/Virgil/internal/app"
 	"github.com/MiguelReis944/Virgil/internal/config"
@@ -26,12 +27,20 @@ func main() {
 
 type commandKind string
 
+// Set by -ldflags when building a release. Development builds retain stable defaults.
+var (
+	version   = "dev"
+	commit    = "unknown"
+	buildDate = "unknown"
+)
+
 const (
-	commandCore   commandKind = "core"
-	commandRun    commandKind = "run"
-	commandEvents commandKind = "events"
-	commandInit   commandKind = "init"
-	commandTail   commandKind = "tail"
+	commandCore    commandKind = "core"
+	commandRun     commandKind = "run"
+	commandEvents  commandKind = "events"
+	commandInit    commandKind = "init"
+	commandTail    commandKind = "tail"
+	commandVersion commandKind = "version"
 )
 
 func classifyCommand(args []string) (commandKind, []string, error) {
@@ -49,8 +58,10 @@ func classifyCommand(args []string) (commandKind, []string, error) {
 		return commandInit, args[1:], nil
 	case "tail":
 		return commandTail, args[1:], nil
+	case "version":
+		return commandVersion, args[1:], nil
 	default:
-		return "", nil, fmt.Errorf("unknown command: %s (available: serve, run, events, init, tail)", args[0])
+		return "", nil, fmt.Errorf("unknown command: %s (available: serve, run, events, init, tail, version)", args[0])
 	}
 }
 
@@ -68,6 +79,12 @@ func run(args []string) error {
 		return runInit(rest)
 	case commandTail:
 		return runTail(rest)
+	case commandVersion:
+		if len(rest) != 0 {
+			return fmt.Errorf("usage: virgil version")
+		}
+		fmt.Println(versionLine())
+		return nil
 	}
 	flags := flag.NewFlagSet("virgil", flag.ContinueOnError)
 	configPath := flags.String("config", "virgil.toml", "path to local TOML configuration")
@@ -85,9 +102,14 @@ func run(args []string) error {
 	return app.RunCore(ctx, app.CoreOptions{
 		ConfigPath:        *configPath,
 		EnvPath:           *envPath,
+		Version:           version,
 		OpenPanel:         !*noOpen,
 		StartControlPlane: startControlPlane,
 	})
+}
+
+func versionLine() string {
+	return fmt.Sprintf("virgil %s (commit %s, built %s)", strings.TrimSpace(version), strings.TrimSpace(commit), strings.TrimSpace(buildDate))
 }
 
 func startControlPlane(ctx context.Context, cfg config.Config, journal *storage.Journal, engine *policies.Engine) (func(), error) {

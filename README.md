@@ -1,20 +1,18 @@
 # Virgil
 
-Virgil's product direction is a local circuit breaker for supervised AI agents. The current release is a local gateway and policy engine for AI provider traffic. The local core is the main process; the existing panel is available at `/dashboard` on the same loopback address as the gateway.
+Virgil is a local circuit breaker for supervised AI agents. One executable runs the core, gateway, and browser panel on the same machine. A policy block is recorded and terminates the supervised process tree. The panel is available at `/dashboard` on the loopback address.
 
 ## Current functionality
 
-The current gateway supports configured OpenAI-compatible requests, provider adapters, local policy checks, SQLite event storage, JSONL export, and the existing dashboard for request and run telemetry. The core binds to the configured local address. Setup is served locally when the configuration is missing or invalid.
+The gateway supports configured OpenAI-compatible requests, provider adapters, local policy checks, SQLite event and execution history, and JSONL export. The core binds to the configured local address. Setup is served locally when the configuration is missing.
 
-`virgil` starts the local core and opens the browser panel; `virgil serve` remains an alias. The current `virgil run` command starts a child process with gateway-related environment values and can stop the root process on a deadline or interruption. It does not yet receive policy-block signals from the core and does not yet provide process-tree termination.
+`virgil` starts the local core and opens the browser panel; `virgil serve` remains an alias. `virgil run` starts a child under core supervision, supplies the gateway address and run credential, and terminates its process tree on a policy block, deadline, or interruption. `virgil version` displays the binary's version, commit, and build date.
 
-The existing panel is the current Overview and telemetry UI. The dedicated setup flow is available locally. Providers, protections, execution history, and other panel pages described in the approved product direction are not all implemented yet.
+The panel includes Providers, Protections, Executions, Health, Settings, and Usage. Start with Providers and Protections, then launch a supervised child and inspect its result under Executions.
 
-## Approved target (in progress)
+This local product does not require an account or hosted Control Plane. It currently binds to loopback; secure LAN operation is a separate future stage. Historical team-service concepts are retained later in this README as deferred design context.
 
-The approved next stage connects supervised runs to the local core, streams policy-block signals to the runner, and terminates the process tree after a block. The target also adds durable execution outcomes to the panel. These are planned changes; run tokens, the SSE control connection, full-tree termination, and `/dashboard/executions` are not available in the current implementation.
-
-This local product path does not require an account, a hosted Control Plane, or LAN access. Historical team-service concepts are retained later in this README as deferred design context.
+For ready-to-run binaries, checksums, setup, backup, and upgrade instructions, see [Local installation](docs/install.md). The [release acceptance checklist](docs/release-acceptance.md) records the tests required before publishing a release.
 
 ## Build and start the local core
 

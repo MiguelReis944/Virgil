@@ -1,0 +1,76 @@
+name: Build release archives
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions: {}
+
+concurrency:
+  group: release-build-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  archives:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Check source
+        run: |
+          go test -timeout 180s ./...
+          go vet ./...
+      - name: Build archives and checksums
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for target in windows-amd64 linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
+            target_os="${target%%-*}"
+            target_arch="${target##*-}"
+            package="virgil-${RELEASE_TAG}-${target}"
+            stage="$(mktemp -d)"
+            binary=virgil
+            if [[ "$target_os" == windows ]]; then binary=virgil.exe; fi
+            GOOS="$target_os" GOARCH="$target_arch" CGO_ENABLED=0 go build \
+              -trimpath -ldflags "-s -w -X main.version=${RELEASE_TAG} -X main.commit=${RELEASE_COMMIT} -X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              -o "$stage/$binary" ./cmd/virgil
+            cp README.md LICENSE configs/virgil.example.toml "$stage/"
+            if [[ "$target_os" == windows ]]; then
+              (cd "$stage" && zip -q "$GITHUB_WORKSPACE/dist/$package.zip" "$binary" README.md LICENSE virgil.example.toml)
+            else
+              tar -C "$stage" -czf "dist/$package.tar.gz" "$binary" README.md LICENSE virgil.example.toml
+            fi
+            rm -rf "$stage"
+          done
+          (cd dist && sha256sum ./*.zip ./*.tar.gz > SHA256SUMS)
+      - name: Attest archive provenance
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/SHA256SUMS
+      - name: Upload archives
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: virgil-${{ github.ref_name }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30

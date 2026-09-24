@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -213,7 +214,7 @@ func TestCoreOptionsServesPanelUntilCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	finished := make(chan error, 1)
-	go func() { finished <- RunCore(ctx, CoreOptions{ConfigPath: configPath}) }()
+	go func() { finished <- RunCore(ctx, CoreOptions{ConfigPath: configPath, Version: "v9.8.7-test"}) }()
 	client := &http.Client{Timeout: 100 * time.Millisecond}
 	ready := false
 	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); {
@@ -241,6 +242,18 @@ func TestCoreOptionsServesPanelUntilCancelled(t *testing.T) {
 	client.CloseIdleConnections()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("panel status = %d", response.StatusCode)
+	}
+	health, err := client.Get("http://" + address + "/dashboard/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	healthBody, err := io.ReadAll(health.Body)
+	health.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if health.StatusCode != http.StatusOK || !strings.Contains(string(healthBody), "v9.8.7-test") {
+		t.Fatalf("health status=%d does not show injected version", health.StatusCode)
 	}
 	controlURL := "http://" + address + "/api/executions"
 	unauthorized, err := http.Post(controlURL, "application/json", strings.NewReader(`{"run_id":"core_run"}`))

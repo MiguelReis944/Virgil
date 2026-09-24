@@ -27,6 +27,7 @@ import (
 type CoreOptions struct {
 	ConfigPath        string
 	EnvPath           string
+	Version           string
 	OpenPanel         bool
 	StartControlPlane func(context.Context, config.Config, *storage.Journal, *policies.Engine) (func(), error)
 }
@@ -75,7 +76,7 @@ func RunCore(ctx context.Context, options CoreOptions) error {
 		return err
 	}
 	defer readDB.Close()
-	handler, journal, engine, err := buildHandlerWithControl(cfg, configPath, db, readDB, &credential, startedAt)
+	handler, journal, engine, err := buildHandlerWithControlVersion(cfg, configPath, db, readDB, &credential, options.Version, startedAt)
 	if err != nil {
 		return err
 	}
@@ -256,6 +257,10 @@ func BuildHandlerWithEngine(cfg config.Config, configPath string, db, readDB *sq
 }
 
 func buildHandlerWithControl(cfg config.Config, configPath string, db, readDB *sql.DB, credential *controlauth.Credential, startedAt ...time.Time) (http.Handler, *storage.Journal, *policies.Engine, error) {
+	return buildHandlerWithControlVersion(cfg, configPath, db, readDB, credential, "", startedAt...)
+}
+
+func buildHandlerWithControlVersion(cfg config.Config, configPath string, db, readDB *sql.DB, credential *controlauth.Credential, version string, startedAt ...time.Time) (http.Handler, *storage.Journal, *policies.Engine, error) {
 	journal, err := storage.NewJournalWithReadPool(db, readDB)
 	if err != nil {
 		return nil, nil, nil, err
@@ -308,6 +313,7 @@ func buildHandlerWithControl(cfg config.Config, configPath string, db, readDB *s
 		Settings:          settingsStore,
 		AppliedConfigHash: appliedHash,
 		StartedAt:         coreStartedAt(startedAt),
+		Version:           version,
 	})
 	if err != nil {
 		journal.Close()
