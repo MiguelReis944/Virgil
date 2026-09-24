@@ -336,3 +336,49 @@ func TestHealthUnreadyWhenSQLiteClosed(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 }
+
+func TestPanelRoutesUseUnifiedNavigationAndSecurityContract(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "virgil.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, err := storage.NewJournal(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		journal.Close()
+		_ = db.Close()
+	}()
+	handler, err := NewServer(config.Config{}, Dependencies{DB: db, Recorder: journal})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{
+		"/dashboard", "/dashboard/usage", "/dashboard/session/1", "/dashboard/run/run-test",
+		"/dashboard/event/event-test", "/dashboard/executions", "/dashboard/protections",
+		"/dashboard/providers", "/dashboard/health", "/dashboard/settings",
+	} {
+		t.Run(path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			for _, label := range []string{"Overview", "Executions", "Protections", "Providers", "Usage", "Health", "Settings"} {
+				if !strings.Contains(rec.Body.String(), ">"+label+"<") {
+					t.Errorf("%s missing %s navigation", path, label)
+				}
+			}
+			for name := range map[string]struct{}{
+				"Content-Security-Policy": {}, "X-Frame-Options": {},
+				"X-Content-Type-Options": {}, "Referrer-Policy": {},
+			} {
+				if rec.Header().Get(name) == "" {
+					t.Errorf("%s missing %s", path, name)
+				}
+			}
+		})
+	}
+}

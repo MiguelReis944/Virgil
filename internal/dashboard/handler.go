@@ -22,169 +22,6 @@ type ContentStore interface {
 
 // ---- shared CSS / base style -----------------------------------------
 
-const sharedCSS = `
-:root {
-  --bg: #04060B;
-  --surface: #0B1422;
-  --surface2: #0f1d30;
-  --border: rgba(255,255,255,0.07);
-  --border2: rgba(255,255,255,0.12);
-  --primary: #6366f1;
-  --primary-light: #818cf8;
-  --accent-green: #34d399;
-  --accent-red: #f87171;
-  --accent-yellow: #fbbf24;
-  --accent-blue: #60a5fa;
-  --accent-purple: #a78bfa;
-  --text: #e2e8f0;
-  --text-muted: #64748b;
-  --text-dim: #94a3b8;
-}
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:14px;line-height:1.5}
-a{color:var(--primary-light);text-decoration:none}
-a:hover{color:#c7d2fe}
-header{
-  display:flex;align-items:center;gap:1rem;
-  padding:.9rem 2rem;
-  background:rgba(11,20,34,0.8);
-  border-bottom:1px solid var(--border);
-  backdrop-filter:blur(8px);
-  position:sticky;top:0;z-index:100;
-}
-.logo{font-size:.95rem;font-weight:700;letter-spacing:.08em;color:var(--text);display:flex;align-items:center;gap:.5rem}
-.logo::before{content:"⬡";color:var(--primary);font-size:1.1rem}
-.header-sep{color:var(--border2);font-size:1rem}
-.header-label{font-size:.78rem;color:var(--text-muted)}
-.header-right{margin-left:auto;display:flex;align-items:center;gap:.75rem}
-.btn-sm{
-  background:var(--surface2);border:1px solid var(--border2);border-radius:6px;
-  color:var(--text-dim);font-size:.75rem;padding:.3rem .7rem;cursor:pointer;
-  transition:border-color .15s,color .15s;
-}
-.btn-sm:hover{border-color:var(--primary);color:var(--text)}
-main{padding:2rem;max-width:1200px;margin:0 auto}
-.section-title{
-  font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;
-  color:var(--text-muted);margin-bottom:1rem;margin-top:2rem;
-}
-.section-title:first-child{margin-top:0}
-
-/* cards */
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin-bottom:2rem}
-.card{
-  background:var(--surface);border:1px solid var(--border);border-radius:12px;
-  padding:1.25rem 1.5rem;position:relative;overflow:hidden;
-}
-.card::before{
-  content:'';position:absolute;top:0;left:0;right:0;height:1px;
-  background:linear-gradient(90deg,transparent,var(--primary-light),transparent);
-  opacity:.4;
-}
-.card-label{font-size:.68rem;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);margin-bottom:.5rem}
-.card-value{font-size:1.75rem;font-weight:700;line-height:1}
-.card-sub{font-size:.72rem;color:var(--text-muted);margin-top:.35rem}
-.val-green{color:var(--accent-green)}
-.val-blue{color:var(--accent-blue)}
-.val-red{color:var(--accent-red)}
-.val-purple{color:var(--accent-purple)}
-.val-yellow{color:var(--accent-yellow)}
-.val-white{color:var(--text)}
-
-/* table */
-.table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:1.5rem}
-table{width:100%;border-collapse:collapse;font-size:.85rem}
-thead th{
-  text-align:left;padding:.65rem 1.1rem;
-  font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;
-  color:var(--text-muted);background:rgba(255,255,255,.02);
-  border-bottom:1px solid var(--border);
-}
-thead th a{color:var(--text-muted)}
-thead th a:hover{color:var(--text)}
-thead th.sort-active a{color:var(--primary-light)}
-tbody tr{border-bottom:1px solid var(--border);transition:background .1s}
-tbody tr:last-child{border-bottom:none}
-tbody tr:hover{background:rgba(255,255,255,.03)}
-tbody td{padding:.7rem 1.1rem;color:var(--text-dim)}
-td.mono{font-family:'SF Mono',monospace;font-size:.78rem;color:var(--text-muted)}
-.no-data{text-align:center;padding:3.5rem;color:var(--text-muted);font-size:.88rem}
-
-/* badges */
-.badge{
-  display:inline-flex;align-items:center;gap:.3rem;
-  padding:.2rem .6rem;border-radius:20px;font-size:.7rem;font-weight:600;
-}
-.badge-success{background:rgba(52,211,153,.12);color:var(--accent-green);border:1px solid rgba(52,211,153,.2)}
-.badge-err{background:rgba(248,113,113,.12);color:var(--accent-red);border:1px solid rgba(248,113,113,.2)}
-.badge-openai{background:rgba(96,165,250,.1);color:var(--accent-blue);border:1px solid rgba(96,165,250,.2)}
-.badge-anthropic{background:rgba(251,191,36,.1);color:var(--accent-yellow);border:1px solid rgba(251,191,36,.2)}
-.badge-nvidia{background:rgba(52,211,153,.1);color:var(--accent-green);border:1px solid rgba(52,211,153,.2)}
-.badge-other{background:rgba(167,139,250,.1);color:var(--accent-purple);border:1px solid rgba(167,139,250,.2)}
-
-/* filter bar */
-.filter-bar{display:flex;gap:.75rem;margin-bottom:1.25rem;align-items:center;flex-wrap:wrap}
-.filter-bar label{font-size:.75rem;color:var(--text-muted)}
-.filter-bar select,.filter-bar input{
-  background:var(--surface2);border:1px solid var(--border2);border-radius:6px;
-  color:var(--text);padding:.35rem .65rem;font-size:.8rem;outline:none;
-}
-.filter-bar select:focus,.filter-bar input:focus{border-color:var(--primary)}
-.filter-bar button{
-  background:var(--primary);border:none;border-radius:6px;
-  color:#fff;padding:.35rem .9rem;font-size:.8rem;cursor:pointer;font-weight:500;
-}
-.filter-bar button:hover{background:var(--primary-light)}
-
-/* chart */
-.chart-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1.25rem 1.5rem;margin-bottom:1.5rem}
-.cost-chart{display:block;width:100%;max-width:700px}
-
-/* run link */
-a.run-link{color:var(--primary-light);font-family:'SF Mono',monospace;font-size:.78rem}
-
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-
-/* show more */
-.show-more-wrap{text-align:center;padding:.75rem;border-top:1px solid var(--border)}
-.btn-show-more{
-  background:none;border:1px solid var(--border2);border-radius:6px;
-  color:var(--text-muted);font-size:.78rem;padding:.35rem 1.2rem;cursor:pointer;
-}
-.btn-show-more:hover{border-color:var(--primary);color:var(--text)}
-.event-row-hidden,.run-row-hidden,.session-row-hidden{display:none}
-
-footer{text-align:center;padding:2rem;font-size:.7rem;color:var(--text-muted);opacity:.6}
-
-/* login */
-.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center}
-.login-card{
-  background:var(--surface);border:1px solid var(--border);border-radius:16px;
-  padding:2.5rem 2rem;width:340px;position:relative;overflow:hidden;
-}
-.login-card::before{
-  content:'';position:absolute;top:0;left:0;right:0;height:1px;
-  background:linear-gradient(90deg,transparent,var(--primary-light),transparent);
-}
-.login-logo{font-size:1.3rem;font-weight:800;letter-spacing:.06em;margin-bottom:.5rem;display:flex;align-items:center;gap:.6rem}
-.login-logo::before{content:"⬡";color:var(--primary);font-size:1.4rem}
-.login-sub{font-size:.8rem;color:var(--text-muted);margin-bottom:2rem}
-.form-label{display:block;font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:.45rem}
-.form-input{
-  width:100%;padding:.65rem .85rem;
-  background:var(--bg);border:1px solid var(--border2);border-radius:8px;
-  color:var(--text);font-size:.9rem;outline:none;
-}
-.form-input:focus{border-color:var(--primary)}
-.btn-primary{
-  margin-top:1.25rem;width:100%;padding:.7rem;
-  background:var(--primary);border:none;border-radius:8px;
-  color:#fff;font-size:.9rem;font-weight:600;cursor:pointer;
-}
-.btn-primary:hover{background:var(--primary-light)}
-.form-err{color:var(--accent-red);font-size:.78rem;margin-top:.75rem}
-`
-
 // ---- templates -------------------------------------------------------
 
 const loginHTML = `<!DOCTYPE html>
@@ -192,8 +29,6 @@ const loginHTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Virgil — Sign in</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>` + sharedCSS + `</style>
 </head>
 <body>
@@ -212,50 +47,7 @@ const loginHTML = `<!DOCTYPE html>
 </body>
 </html>`
 
-const dashboardHTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Virgil — Dashboard</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>` + sharedCSS + `</style>
-<script>
-// Auto-refresh every 15s; cancel when filters are active or user is typing
-(function(){
-  var params = new URLSearchParams(location.search);
-  var hasFilter = params.get('model') || params.get('provider') || params.get('status') ||
-                  params.get('min_lat') || params.get('max_lat');
-  if (hasFilter) {
-    var dot = document.getElementById('refresh-dot');
-    if (dot) dot.style.opacity = '0.3';
-    return;
-  }
-  var t = setTimeout(function(){ location.reload(); }, 15000);
-  document.addEventListener('focusin', function(){ clearTimeout(t); });
-})();
-</script>
-</head>
-<body>
-<header>
-  <span class="logo">Virgil</span>
-  <span class="header-sep">/</span>
-  <span class="header-label">Dashboard</span>
-  <div class="header-right">
-    <a href="/setup" class="btn-sm">⚙ Setup</a>
-    <span style="font-size:.72rem;color:var(--text-muted)">last {{.SinceHours}}h</span>
-    <span id="refresh-dot" style="font-size:.65rem;color:var(--text-muted);display:flex;align-items:center;gap:.3rem">
-      <span style="width:6px;height:6px;border-radius:50%;background:var(--accent-green);display:inline-block;animation:pulse 2s ease-in-out infinite"></span>live
-    </span>
-    {{if .HasAuth}}
-    <form method="POST" action="/logout">
-      <button type="submit" class="btn-sm">Sign out</button>
-    </form>
-    {{end}}
-  </div>
-</header>
-<main>
+const dashboardHTML = `{{define "content"}}
 
   <!-- summary cards -->
   <div class="cards">
@@ -733,29 +525,18 @@ if(sessionsMoreBtn){
 })();
 </script>
 
-</main>
-<footer>Virgil &middot; local AI proxy</footer>
-</body>
-</html>`
+<script>
+(function(){
+  var params = new URLSearchParams(location.search);
+  if(params.get('model') || params.get('provider') || params.get('status') || params.get('min_lat') || params.get('max_lat')) return;
+  var timer = setTimeout(function(){ location.reload(); }, 15000);
+  document.addEventListener('focusin', function(){ clearTimeout(timer); });
+})();
+</script>
 
-const runHTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Virgil — Run {{.RunID}}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>` + sharedCSS + `</style>
-</head>
-<body>
-<header>
-  <span class="logo">Virgil</span>
-  <span class="header-sep">/</span>
-  <a href="/dashboard" style="font-size:.8rem;color:var(--text-muted)">← Dashboard</a>
-  <span class="header-sep">/</span>
-  <span class="header-label" style="font-family:'SF Mono',monospace;font-size:.78rem">{{.RunID}}</span>
-</header>
-<main>
+{{end}}`
+
+const runHTML = `{{define "content"}}
 
   <!-- run summary cards -->
   <div class="cards">
@@ -820,10 +601,8 @@ if(evMoreBtn){
 }
 </script>
 
-</main>
-<footer>Virgil &middot; local AI proxy</footer>
-</body>
-</html>`
+
+{{end}}`
 
 // ---- template data types ---------------------------------------------
 
@@ -929,14 +708,7 @@ type eventDisplay struct {
 
 // ---- compiled templates ----------------------------------------------
 
-const eventDetailHTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Virgil — Event {{.EventID}}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>` + sharedCSS + `
+const eventDetailHTML = `{{define "content"}}<style>
 .content-box{
   background:var(--surface);border:1px solid var(--border);border-radius:12px;
   padding:1.25rem 1.5rem;margin-bottom:1.5rem;
@@ -954,16 +726,7 @@ const eventDetailHTML = `<!DOCTYPE html>
 .msg-block:last-child{border-bottom:none}
 .no-content{color:var(--text-muted);font-size:.85rem;font-style:italic}
 </style>
-</head>
-<body>
-<header>
-  <span class="logo">Virgil</span>
-  <span class="header-sep">/</span>
-  <a href="/dashboard" style="font-size:.8rem;color:var(--text-muted)">← Dashboard</a>
-  <span class="header-sep">/</span>
-  <span class="header-label" style="font-family:'SF Mono',monospace;font-size:.78rem">{{.EventID}}</span>
-</header>
-<main>
+
 
   <div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
     <div class="card">
@@ -1030,31 +793,12 @@ const eventDetailHTML = `<!DOCTYPE html>
   </div>
   {{end}}
 
-</main>
-<footer>Virgil &middot; local AI proxy</footer>
-</body>
-</html>`
+
+{{end}}`
 
 var eventDetailTmpl = template.Must(template.New("event").Parse(eventDetailHTML))
 
-const sessionHTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Virgil — Session {{.TimeLabel}}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>` + sharedCSS + `</style>
-</head>
-<body>
-<header>
-  <span class="logo">Virgil</span>
-  <span class="header-sep">/</span>
-  <a href="/dashboard" style="font-size:.8rem;color:var(--text-muted)">← Dashboard</a>
-  <span class="header-sep">/</span>
-  <span class="header-label">Session {{.TimeLabel}}</span>
-</header>
-<main>
+const sessionHTML = `{{define "content"}}
 
   <div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
     <div class="card">
@@ -1108,8 +852,7 @@ const sessionHTML = `<!DOCTYPE html>
   </div>
   {{else}}<div class="no-data">No events found for this session.</div>{{end}}
 
-</main>
-<footer>Virgil &middot; local AI proxy</footer>
+
 <script>
 var evMoreBtn = document.getElementById('ev-more-btn');
 if(evMoreBtn){
@@ -1118,9 +861,7 @@ if(evMoreBtn){
     this.parentElement.style.display='none';
   });
 }
-</script>
-</body>
-</html>`
+</script>{{end}}`
 
 var sessionTmpl = template.Must(template.New("session").Parse(sessionHTML))
 
@@ -1214,6 +955,7 @@ var runTmpl = template.Must(template.New("run").Parse(runHTML))
 // LoginHandler handles GET and POST /login.
 func LoginHandler(password string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		setPanelHeaders(w.Header())
 		if r.Method == http.MethodPost {
 			input := r.FormValue("password")
 			ok, err := Login(w, password, input)
@@ -1236,6 +978,7 @@ func LoginHandler(password string) http.HandlerFunc {
 // LogoutHandler handles POST /logout.
 func LogoutHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		setPanelHeaders(w.Header())
 		Logout(w, r)
 		http.Redirect(w, r, "/login", http.StatusFound)
 	}
@@ -1244,6 +987,7 @@ func LogoutHandler() http.HandlerFunc {
 // DashboardHandler handles GET /dashboard.
 func DashboardHandler(db *sql.DB, password string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		setPanelHeaders(w.Header())
 		if !IsAuthed(r, password) {
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
@@ -1416,8 +1160,7 @@ func DashboardHandler(db *sql.DB, password string) http.HandlerFunc {
 			HMaxOutTok:        hMaxOutTok,
 		}
 
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := dashTmpl.Execute(w, data); err != nil {
+		if err := renderTemplatePage(w, pageData{Title: "Usage", ActiveSection: sectionUsage, HasAuth: password != ""}, dashTmpl, data); err != nil {
 			http.Error(w, "render error", http.StatusInternalServerError)
 		}
 	}
@@ -1426,6 +1169,7 @@ func DashboardHandler(db *sql.DB, password string) http.HandlerFunc {
 // SessionHandler handles GET /dashboard/session/{bucketTS}.
 func SessionHandler(db *sql.DB, password string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		setPanelHeaders(w.Header())
 		if !IsAuthed(r, password) {
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
@@ -1481,8 +1225,7 @@ func SessionHandler(db *sql.DB, password string) http.HandlerFunc {
 			TotalOutputTokens: outTok,
 			Events:            evDisplay,
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := sessionTmpl.Execute(w, data); err != nil {
+		if err := renderTemplatePage(w, pageData{Title: "Session " + timeLabel, ActiveSection: sectionUsage, HasAuth: password != ""}, sessionTmpl, data); err != nil {
 			http.Error(w, "render error", http.StatusInternalServerError)
 		}
 	}
@@ -1491,6 +1234,7 @@ func SessionHandler(db *sql.DB, password string) http.HandlerFunc {
 // RunHandler handles GET /dashboard/run/{runID}.
 func RunHandler(db *sql.DB, password string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		setPanelHeaders(w.Header())
 		if !IsAuthed(r, password) {
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
@@ -1524,8 +1268,7 @@ func RunHandler(db *sql.DB, password string) http.HandlerFunc {
 			TotalOutputTokens: outTok,
 			Events:            evDisplay,
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := runTmpl.Execute(w, data); err != nil {
+		if err := renderTemplatePage(w, pageData{Title: "Execution " + runID, ActiveSection: sectionExecutions, HasAuth: password != ""}, runTmpl, data); err != nil {
 			http.Error(w, "render error", http.StatusInternalServerError)
 		}
 	}
@@ -1534,6 +1277,7 @@ func RunHandler(db *sql.DB, password string) http.HandlerFunc {
 // EventHandler handles GET /dashboard/event/{eventID}.
 func EventHandler(db *sql.DB, cs ContentStore, password string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		setPanelHeaders(w.Header())
 		if !IsAuthed(r, password) {
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
@@ -1599,8 +1343,7 @@ func EventHandler(db *sql.DB, cs ContentStore, password string) http.HandlerFunc
 			data.ErrorMessage = rec.ErrorMessage
 		}
 
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := eventDetailTmpl.Execute(w, data); err != nil {
+		if err := renderTemplatePage(w, pageData{Title: "Event " + eventID, ActiveSection: sectionUsage, HasAuth: password != ""}, eventDetailTmpl, data); err != nil {
 			http.Error(w, "render error", http.StatusInternalServerError)
 		}
 	}
