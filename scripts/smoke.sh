@@ -66,10 +66,10 @@ if [[ ! -s "$temp_dir/control.token" ]]; then
   exit 1
 fi
 credential=$(tr -d '\r\n' < "$temp_dir/control.token")
-run_id="smoke_$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+run_id="run_smoke_$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
 response=''
 for ((attempt = 0; attempt < 30; attempt++)); do
-  if response=$(curl --ipv4 --fail --silent --show-error --noproxy '*' --max-time 3 \
+  if response=$(curl --ipv4 --fail-with-body --silent --show-error --noproxy '*' --max-time 3 \
     --request POST --header "Authorization: Bearer $credential" \
     --header 'Content-Type: application/json' \
     --data "{\"run_id\":\"$run_id\"}" "$base_url/api/executions" 2>"$temp_dir/register.err"); then
@@ -79,6 +79,7 @@ for ((attempt = 0; attempt < 30; attempt++)); do
 done
 if [[ -z "$response" ]]; then
   echo 'Virgil did not register a synthetic execution' >&2
+  echo 'registration response:' >&2
   cat "$temp_dir/register.err" >&2
   cat "$temp_dir/stderr.log" >&2
   exit 1
