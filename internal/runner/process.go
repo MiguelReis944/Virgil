@@ -90,11 +90,8 @@ func childEnvironment(spec RunSpec, runID string) []string {
 	raw := os.Environ()
 	env := make([]string, 0, len(raw)+len(spec.Env)+5)
 	for _, kv := range raw {
-		upper := strings.ToUpper(kv)
-		if strings.Contains(upper, "API_KEY=") ||
-			strings.Contains(upper, "API_TOKEN=") ||
-			strings.Contains(upper, "SECRET=") ||
-			strings.HasPrefix(upper, "VIRGIL_LOCAL_APP_TOKEN=") {
+		key, _, _ := strings.Cut(kv, "=")
+		if credentialEnvKey(key) {
 			continue
 		}
 		env = append(env, kv)
