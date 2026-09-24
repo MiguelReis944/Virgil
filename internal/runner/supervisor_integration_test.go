@@ -3,9 +3,11 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -146,6 +148,72 @@ func TestSupervisorMarkRunningFailureRevokesIdentity(t *testing.T) {
 	stored := f.assertFinishedAndRevoked(t, executions.StateFailed)
 	if stored.TerminationStatus != executions.TerminationSucceeded {
 		t.Fatalf("termination=%s", stored.TerminationStatus)
+	}
+}
+
+func TestSupervisorStartingTerminationFailureRevokesIdentity(t *testing.T) {
+	f := newRealCoreFixture(t)
+	f.setHooks(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }, nil)
+	stopErr := errors.New("synthetic process tree failure")
+	p := &supervisedProcess{done: make(chan struct{}), exit: 1, terminateErr: stopErr}
+	_, err := runRealFixture(t, f, context.Background(), 0, p)
+	if err == nil || !errors.Is(err, stopErr) || !strings.Contains(err.Error(), "mark execution running") {
+		t.Fatalf("supervisor error=%v", err)
+	}
+	stored := f.assertFinishedAndRevoked(t, executions.StateTerminationFailed)
+	if stored.StopReason != "control_unavailable" || stored.TerminationStatus != executions.TerminationFailed || stored.TerminationErrorCode != "process_termination_failed" {
+		t.Fatalf("stored=%+v", stored)
+	}
+}
+
+func TestSupervisorPendingMarkTerminationFailurePreservesCause(t *testing.T) {
+	for _, tc := range []struct {
+		name, reason               string
+		deadline                   time.Duration
+		closeSignals, cancelParent bool
+	}{
+		{"deadline", "deadline", 70 * time.Millisecond, false, false},
+		{"signal loss", "signal_lost", 0, true, false},
+		{"cancellation", "interrupted", 0, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRealCoreFixture(t)
+			release := make(chan struct{})
+			t.Cleanup(func() { close(release) })
+			var signalHook func(http.ResponseWriter, *http.Request)
+			if tc.closeSignals {
+				signalHook = func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "text/event-stream")
+					w.Write([]byte("event: ready\n\n"))
+					w.(http.Flusher).Flush()
+				}
+			}
+			entered := make(chan struct{}, 1)
+			f.setHooks(func(_ http.ResponseWriter, r *http.Request) {
+				entered <- struct{}{}
+				select {
+				case <-r.Context().Done():
+				case <-release:
+				}
+			}, signalHook)
+			stopErr := errors.New("synthetic process tree failure")
+			p := &supervisedProcess{done: make(chan struct{}), exit: 1, terminateErr: stopErr}
+			ctx := context.Background()
+			if tc.cancelParent {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				defer cancel()
+				go func() { <-entered; cancel() }()
+			}
+			_, err := runRealFixture(t, f, ctx, tc.deadline, p)
+			if !errors.Is(err, stopErr) {
+				t.Fatalf("supervisor error=%v", err)
+			}
+			stored := f.assertFinishedAndRevoked(t, executions.StateTerminationFailed)
+			if stored.StopReason != tc.reason || stored.TerminationStatus != executions.TerminationFailed || stored.TerminationErrorCode != "process_termination_failed" {
+				t.Fatalf("stored=%+v", stored)
+			}
+		})
 	}
 }
 

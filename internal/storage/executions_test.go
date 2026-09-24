@@ -144,6 +144,46 @@ func TestExecutionRunningTerminationFailure(t *testing.T) {
 	}
 }
 
+func TestExecutionStartingTerminationFailure(t *testing.T) {
+	j := executionJournal(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if err := j.StartExecution(ctx, "run_starting", now); err != nil {
+		t.Fatal(err)
+	}
+	result := executions.ExecutionResult{RunID: "run_starting", State: executions.StateTerminationFailed, EndedAt: now.Add(time.Second), ExitCode: -1, StopReason: "signal_lost", TerminationStatus: executions.TerminationFailed, TerminationErrorCode: "process_termination_failed"}
+	if err := j.FinishExecution(ctx, result); err != nil {
+		t.Fatal(err)
+	}
+	got, err := j.Execution(ctx, "run_starting")
+	if err != nil || got.State != executions.StateTerminationFailed || got.StopReason != "signal_lost" || got.TerminationStatus != executions.TerminationFailed || got.TerminationErrorCode != "process_termination_failed" {
+		t.Fatalf("execution=%+v err=%v", got, err)
+	}
+	if err := j.FinishExecution(ctx, result); !errors.Is(err, executions.ErrInvalidTransition) {
+		t.Fatalf("duplicate failure: %v", err)
+	}
+	if err := j.MarkExecutionRunning(ctx, "run_starting"); !errors.Is(err, executions.ErrInvalidTransition) {
+		t.Fatalf("running after failure: %v", err)
+	}
+}
+
+func TestExecutionStartingRejectsUnnormalizedTerminationCode(t *testing.T) {
+	j := executionJournal(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if err := j.StartExecution(ctx, "run_bad_code", now); err != nil {
+		t.Fatal(err)
+	}
+	result := executions.ExecutionResult{RunID: "run_bad_code", State: executions.StateTerminationFailed, EndedAt: now.Add(time.Second), StopReason: "control_unavailable", TerminationStatus: executions.TerminationFailed, TerminationErrorCode: "kill failed: secret detail"}
+	if err := j.FinishExecution(ctx, result); err == nil {
+		t.Fatal("unnormalized termination error code accepted")
+	}
+	got, err := j.Execution(ctx, "run_bad_code")
+	if err != nil || got.State != executions.StateStarting || got.EndedAt != nil {
+		t.Fatalf("execution=%+v err=%v", got, err)
+	}
+}
+
 func TestExecutionInvalidTransitionsAndInputs(t *testing.T) {
 	j := executionJournal(t)
 	ctx := context.Background()

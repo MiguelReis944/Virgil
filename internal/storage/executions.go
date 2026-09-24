@@ -67,13 +67,13 @@ func (j *Journal) FinishExecution(ctx context.Context, result executions.Executi
 			WHERE run_id=? AND state='blocked' AND termination_status IS NULL`,
 			endedAt, result.ExitCode, result.StopReason, result.RunID)
 	case executions.StateTerminationFailed:
-		if result.TerminationStatus != executions.TerminationFailed || result.TerminationErrorCode == "" {
+		if result.TerminationStatus != executions.TerminationFailed || !normalizedTerminationCode(result.TerminationErrorCode) {
 			return fmt.Errorf("finish execution: invalid failed termination")
 		}
 		updated, err = j.db.ExecContext(ctx, `UPDATE executions SET
 			state='termination_failed', ended_at_unix_ns=?, exit_code=?, stop_reason=NULLIF(?, ''),
 			termination_status='failed', termination_error_code=?
-			WHERE run_id=? AND state IN ('blocked', 'running') AND termination_status IS NULL`,
+			WHERE run_id=? AND state IN ('starting', 'blocked', 'running') AND termination_status IS NULL`,
 			endedAt, result.ExitCode, result.StopReason, result.TerminationErrorCode, result.RunID)
 	case executions.StateCompleted, executions.StateFailed, executions.StateDeadline,
 		executions.StateInterrupted, executions.StateGatewayFailed:
@@ -108,6 +108,19 @@ func validTerminationStatus(status executions.TerminationStatus) bool {
 	default:
 		return false
 	}
+}
+
+func normalizedTerminationCode(code string) bool {
+	if len(code) == 0 || len(code) > 64 || code[0] < 'a' || code[0] > 'z' {
+		return false
+	}
+	for i := 1; i < len(code); i++ {
+		c := code[i]
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 func executionUpdateResult(action string, result sql.Result, err error) error {
