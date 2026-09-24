@@ -2,22 +2,54 @@ name: CI
 
 on:
   push:
-    branches: ["main"]
+    branches: [main]
   pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  verify:
+    name: Verify ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: actions/setup-go@v5
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: go.sum
 
-      - name: vet
+      - name: Vet
         run: go vet ./...
 
-      - name: test
-        run: go test -race -timeout 120s ./...
+      - name: Race tests
+        run: go test -race -shuffle=on -count=1 -timeout 180s ./...
+
+      - name: Build installed binary
+        run: go build -o ./virgil${{ runner.os == 'Windows' && '.exe' || '' }} ./cmd/virgil
+
+      - name: Smoke installed binary on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/smoke.ps1 -Binary ./virgil.exe
+
+      - name: Smoke installed binary on Linux and macOS
+        if: runner.os != 'Windows'
+        shell: bash
+        run: bash ./scripts/smoke.sh ./virgil
