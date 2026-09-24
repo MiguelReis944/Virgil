@@ -32,6 +32,7 @@ type CoreOptions struct {
 }
 
 func RunCore(ctx context.Context, options CoreOptions) error {
+	startedAt := time.Now()
 	configPath := options.ConfigPath
 	if configPath == "" {
 		configPath = "virgil.toml"
@@ -74,7 +75,7 @@ func RunCore(ctx context.Context, options CoreOptions) error {
 		return err
 	}
 	defer readDB.Close()
-	handler, journal, engine, err := buildHandlerWithControl(cfg, configPath, db, readDB, &credential)
+	handler, journal, engine, err := buildHandlerWithControl(cfg, configPath, db, readDB, &credential, startedAt)
 	if err != nil {
 		return err
 	}
@@ -254,7 +255,7 @@ func BuildHandlerWithEngine(cfg config.Config, configPath string, db, readDB *sq
 	return buildHandlerWithControl(cfg, configPath, db, readDB, nil)
 }
 
-func buildHandlerWithControl(cfg config.Config, configPath string, db, readDB *sql.DB, credential *controlauth.Credential) (http.Handler, *storage.Journal, *policies.Engine, error) {
+func buildHandlerWithControl(cfg config.Config, configPath string, db, readDB *sql.DB, credential *controlauth.Credential, startedAt ...time.Time) (http.Handler, *storage.Journal, *policies.Engine, error) {
 	journal, err := storage.NewJournalWithReadPool(db, readDB)
 	if err != nil {
 		return nil, nil, nil, err
@@ -306,12 +307,20 @@ func buildHandlerWithControl(cfg config.Config, configPath string, db, readDB *s
 		PolicyNotifier:    policyNotifier,
 		Settings:          settingsStore,
 		AppliedConfigHash: appliedHash,
+		StartedAt:         coreStartedAt(startedAt),
 	})
 	if err != nil {
 		journal.Close()
 		return nil, nil, nil, err
 	}
 	return handler, journal, engine, nil
+}
+
+func coreStartedAt(startedAt []time.Time) time.Time {
+	if len(startedAt) > 0 {
+		return startedAt[0]
+	}
+	return time.Now()
 }
 
 type destinationRecorder struct {

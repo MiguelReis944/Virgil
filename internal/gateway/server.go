@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"github.com/MiguelReis944/Virgil/internal/config"
@@ -59,6 +60,8 @@ type Dependencies struct {
 	PolicyNotifier    PolicyBlockNotifier
 	Settings          *settings.Store
 	AppliedConfigHash string
+	StartedAt         time.Time
+	Version           string
 }
 
 func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
@@ -67,6 +70,12 @@ func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
 	}
 	if deps.Policy == nil && hasGuardrails(cfg.Guardrails) {
 		return nil, errors.New("configured guardrails require a policy engine")
+	}
+	if deps.StartedAt.IsZero() {
+		deps.StartedAt = time.Now()
+	}
+	if deps.Version == "" {
+		deps.Version = runningVersion()
 	}
 	router, err := newRouter(cfg, deps.Client, deps.Getenv)
 	if err != nil {
@@ -122,14 +131,15 @@ func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
 		mux.Handle("POST /dashboard/protections", protectionsHandler)
 		mux.Handle("GET /dashboard/providers", providersHandler)
 		mux.Handle("POST /dashboard/providers", providersHandler)
-		mux.Handle("GET /dashboard/health", dashboard.HealthHandler(settingsStore, deps.AppliedConfigHash, deps.DashboardPassword))
+		mux.Handle("GET /dashboard/health", dashboard.HealthHandler(settingsStore, deps.AppliedConfigHash, deps.DashboardPassword, dashboard.HealthOptions{DB: deps.DB, StartedAt: deps.StartedAt, Version: deps.Version, AppliedProviders: len(cfg.Providers)}))
+		mux.Handle("GET /dashboard/settings", dashboard.SettingsHandler(settingsStore, deps.DashboardPassword, cfg))
 	} else {
 		mux.Handle("GET /dashboard/protections", dashboard.PlaceholderHandler(deps.DashboardPassword, "Protections", "protections"))
 		mux.Handle("GET /dashboard/providers", dashboard.PlaceholderHandler(deps.DashboardPassword, "Providers", "providers"))
 		mux.Handle("GET /dashboard/health", dashboard.PlaceholderHandler(deps.DashboardPassword, "Health", "health"))
+		mux.Handle("GET /dashboard/settings", dashboard.PlaceholderHandler(deps.DashboardPassword, "Settings", "settings"))
 	}
 	mux.Handle("GET /dashboard/usage", dashboard.DashboardHandler(deps.DB, deps.DashboardPassword))
-	mux.Handle("GET /dashboard/settings", dashboard.PlaceholderHandler(deps.DashboardPassword, "Settings", "settings"))
 	mux.Handle("GET /dashboard/session/{bucketTS}", dashboard.SessionHandler(deps.DB, deps.DashboardPassword))
 	mux.Handle("GET /dashboard/run/{runID}", dashboard.LegacyRunRedirectHandler(deps.DashboardPassword))
 	if cs, ok := deps.Recorder.(dashboard.ContentStore); ok {
@@ -165,6 +175,22 @@ func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
 		_ = json.NewEncoder(w).Encode(body)
 	})
 	return mux, nil
+}
+
+func runningVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "development"
+	}
+	if info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == "vcs.revision" && len(setting.Value) >= 12 {
+			return setting.Value[:12]
+		}
+	}
+	return "development"
 }
 
 func hasGuardrails(g config.GuardrailsConfig) bool {

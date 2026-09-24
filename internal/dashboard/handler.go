@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -79,7 +80,7 @@ const dashboardHTML = `{{define "content"}}
   </div>
 
   <!-- filters -->
-  <form class="filter-bar" method="get" action="/dashboard" id="filter-form">
+  <form class="filter-bar" method="get" action="/dashboard/usage" id="filter-form">
     <label>Model
       <select name="model">
         <option value="">All</option>
@@ -110,7 +111,7 @@ const dashboardHTML = `{{define "content"}}
       <input type="hidden" name="hours" id="hours-input" value="{{.SinceHours}}">
     </div>
     <button type="submit">Apply</button>
-    <a href="/dashboard" style="font-size:.75rem;color:var(--text-muted);padding:.3rem .5rem">Reset</a>
+    <a href="/dashboard/usage" style="font-size:.75rem;color:var(--text-muted);padding:.3rem .5rem">Reset</a>
   </form>
   <style>
   .quick-h{background:var(--surface2);border:1px solid var(--border2);border-radius:5px;color:var(--text-muted);font-size:.75rem;padding:.25rem .6rem;cursor:pointer}
@@ -435,7 +436,7 @@ const dashboardHTML = `{{define "content"}}
       </tr>{{end}}</tbody>
     </table>
   </div>
-  {{else}}<div class="no-data">No data for this period.</div>{{end}}
+  {{else}}<div class="no-data" role="status">No usage recorded for this period. Run an application through Virgil or choose a longer period.</div>{{end}}
 
   <!-- recent sessions -->
   <p class="section-title">Recent Sessions</p>
@@ -480,7 +481,7 @@ const dashboardHTML = `{{define "content"}}
     </div>
     {{end}}
   </div>
-  {{else}}<div class="no-data">No sessions in this period.</div>{{end}}
+  {{else}}<div class="no-data" role="status">No sessions in this period. Run an application through Virgil or choose a longer period.</div>{{end}}
 
 <script>
 // show-more
@@ -607,49 +608,49 @@ if(evMoreBtn){
 // ---- template data types ---------------------------------------------
 
 type dashData struct {
-	HasAuth            bool
-	SinceHours         int
-	FilterModel        string
-	FilterProvider     string
-	FilterStatus       string
-	FilterMinLat       string
-	FilterMaxLat       string
-	SortBy             string
-	TotalCalls         int64
-	TotalErrors        int64
-	TotalCost          string
-	SuccessRate        string
-	AvgLatency         string
-	TotalInputTokens   int64
-	TotalOutputTokens  int64
-	AllModels          []string
-	AllProviders       []string
-	Rows               []usageRowDisplay
-	Sessions           []sessionRowDisplay
-	HourlySeries       []HourPoint
-	ModelBars          []ModelBar
-	ProviderBars       []ModelBar
+	HasAuth           bool
+	SinceHours        int
+	FilterModel       string
+	FilterProvider    string
+	FilterStatus      string
+	FilterMinLat      string
+	FilterMaxLat      string
+	SortBy            string
+	TotalCalls        int64
+	TotalErrors       int64
+	TotalCost         string
+	SuccessRate       string
+	AvgLatency        string
+	TotalInputTokens  int64
+	TotalOutputTokens int64
+	AllModels         []string
+	AllProviders      []string
+	Rows              []usageRowDisplay
+	Sessions          []sessionRowDisplay
+	HourlySeries      []HourPoint
+	ModelBars         []ModelBar
+	ProviderBars      []ModelBar
 	// max values for Y-axis labels
-	HMaxCalls   int64
-	HMaxLatMS   float64
-	HMaxCost    float64
-	HMaxInTok   int64
-	HMaxOutTok  int64
+	HMaxCalls  int64
+	HMaxLatMS  float64
+	HMaxCost   float64
+	HMaxInTok  int64
+	HMaxOutTok int64
 }
 
 type sessionRowDisplay struct {
-	BucketTS   int64
-	Model      string
-	TimeLabel  string
-	Calls      int64
-	Errors     int64
-	InTokens   int64
-	OutTokens  int64
-	CostStr    string
-	LatStr     string
-	Providers  string
-	HasErrors  bool
-	GapMins    int64 // minutes since the row above (newer); >0 means a gap
+	BucketTS  int64
+	Model     string
+	TimeLabel string
+	Calls     int64
+	Errors    int64
+	InTokens  int64
+	OutTokens int64
+	CostStr   string
+	LatStr    string
+	Providers string
+	HasErrors bool
+	GapMins   int64 // minutes since the row above (newer); >0 means a gap
 }
 
 type usageRowDisplay struct {
@@ -872,29 +873,37 @@ const chartTop, chartBase = 15, 95
 
 var dashTmpl = template.Must(template.New("dash").Funcs(template.FuncMap{
 	// bar top-Y: base minus height
-	"barY":      func(h int) int { return chartBase - h },
-	"callsBarY": func(h int) int { return chartBase - h },
-	"errBarY":   func(h int) int { return chartBase - h },
-	"inTokBarY": func(h int) int { return chartBase - h },
-	"outTokBarY":func(h int) int { return chartBase - h },
+	"barY":       func(h int) int { return chartBase - h },
+	"callsBarY":  func(h int) int { return chartBase - h },
+	"errBarY":    func(h int) int { return chartBase - h },
+	"inTokBarY":  func(h int) int { return chartBase - h },
+	"outTokBarY": func(h int) int { return chartBase - h },
 	// token out bar x = cx (in is left half, out right half)
 	"tokOutX": func(cx, bw int) int { return cx },
 	// half-bar width
 	"halfW": func(bw int) int { return bw/2 - 1 },
 	// line chart helpers
-	"latCX":  func(cx int) int { return cx },
-	"latCY":  func(h int) int { return chartBase - h },
+	"latCX": func(cx int) int { return cx },
+	"latCY": func(h int) int { return chartBase - h },
 	"showLabel": func(i, n int) bool {
-		if n <= 8 { return true }
+		if n <= 8 {
+			return true
+		}
 		step := n / 6
-		if step < 1 { step = 1 }
+		if step < 1 {
+			step = 1
+		}
 		return i%step == 0
 	},
 	"latLine": func(pts []HourPoint) string {
-		if len(pts) == 0 { return "" }
+		if len(pts) == 0 {
+			return ""
+		}
 		var b strings.Builder
 		for _, p := range pts {
-			if b.Len() > 0 { b.WriteByte(' ') }
+			if b.Len() > 0 {
+				b.WriteByte(' ')
+			}
 			fmt.Fprintf(&b, "%d,%d", p.BarCX, chartBase-p.LatH)
 		}
 		return b.String()
@@ -902,50 +911,76 @@ var dashTmpl = template.Must(template.New("dash").Funcs(template.FuncMap{
 	// value label Y (above bar, min 12px from top)
 	"valY": func(h int) int {
 		y := chartBase - h - 4
-		if y < chartTop+8 { y = chartTop + 8 }
+		if y < chartTop+8 {
+			y = chartTop + 8
+		}
 		return y
 	},
 	// number formatters
 	"fmtK": func(v int64) string {
-		if v >= 1_000_000 { return fmt.Sprintf("%.1fM", float64(v)/1_000_000) }
-		if v >= 1_000     { return fmt.Sprintf("%.1fK", float64(v)/1_000) }
+		if v >= 1_000_000 {
+			return fmt.Sprintf("%.1fM", float64(v)/1_000_000)
+		}
+		if v >= 1_000 {
+			return fmt.Sprintf("%.1fK", float64(v)/1_000)
+		}
 		return fmt.Sprintf("%d", v)
 	},
 	"fmtMs": func(v float64) string {
-		if v >= 60_000 { return fmt.Sprintf("%.1fm", v/60_000) }
-		if v >= 1_000  { return fmt.Sprintf("%.1fs", v/1_000) }
+		if v >= 60_000 {
+			return fmt.Sprintf("%.1fm", v/60_000)
+		}
+		if v >= 1_000 {
+			return fmt.Sprintf("%.1fs", v/1_000)
+		}
 		return fmt.Sprintf("%.0fms", v)
 	},
 	"fmtCost": func(v float64) string {
-		if v == 0 { return "$0" }
-		if v < 0.01 { return fmt.Sprintf("$%.4f", v) }
+		if v == 0 {
+			return "$0"
+		}
+		if v < 0.01 {
+			return fmt.Sprintf("$%.4f", v)
+		}
 		return fmt.Sprintf("$%.3f", v)
 	},
 	"fmtPct": func(calls, errs int64) string {
-		if calls == 0 { return "0%" }
+		if calls == 0 {
+			return "0%"
+		}
 		return fmt.Sprintf("%.0f%%", float64(errs)/float64(calls)*100)
 	},
-	"half2":  func(v float64) float64 { return v / 2 },
-	"halfK":  func(v int64) string {
+	"half2": func(v float64) float64 { return v / 2 },
+	"halfK": func(v int64) string {
 		h := v / 2
-		if h >= 1_000 { return fmt.Sprintf("%.1fK", float64(h)/1_000) }
+		if h >= 1_000 {
+			return fmt.Sprintf("%.1fK", float64(h)/1_000)
+		}
 		return fmt.Sprintf("%d", h)
 	},
 	// halfMs formats half of a millisecond value as a human-readable time string.
 	"halfMs": func(v float64) string {
 		h := v / 2
-		if h >= 60_000 { return fmt.Sprintf("%.1fm", h/60_000) }
-		if h >= 1_000  { return fmt.Sprintf("%.1fs", h/1_000) }
+		if h >= 60_000 {
+			return fmt.Sprintf("%.1fm", h/60_000)
+		}
+		if h >= 1_000 {
+			return fmt.Sprintf("%.1fs", h/1_000)
+		}
 		return fmt.Sprintf("%.0fms", h)
 	},
 	"halfCost": func(v float64) string {
 		h := v / 2
-		if h == 0 { return "$0" }
-		if h < 0.001 { return fmt.Sprintf("$%.5f", h) }
+		if h == 0 {
+			return "$0"
+		}
+		if h < 0.001 {
+			return fmt.Sprintf("$%.5f", h)
+		}
 		return fmt.Sprintf("$%.4f", h)
 	},
 	"isZeroF": func(v float64) bool { return v == 0 },
-	"sub1": func(n int) int { return n - 1 },
+	"sub1":    func(n int) int { return n - 1 },
 }).Parse(dashboardHTML))
 
 var runTmpl = template.Must(template.New("run").Parse(runHTML))
@@ -1009,17 +1044,17 @@ func DashboardHandler(db *sql.DB, password string) http.HandlerFunc {
 
 		summary, err := QuerySummary(ctx, db, since)
 		if err != nil {
-			http.Error(w, "query error", http.StatusInternalServerError)
+			usageError(w, "usage_summary_query_failed", err)
 			return
 		}
 		usageRows, err := QueryUsage(ctx, db, since, filterModel, filterProvider)
 		if err != nil {
-			http.Error(w, "query error", http.StatusInternalServerError)
+			usageError(w, "usage_breakdown_query_failed", err)
 			return
 		}
 		hourly, err := QueryHourlySeries(ctx, db, hours)
 		if err != nil {
-			http.Error(w, "query error", http.StatusInternalServerError)
+			usageError(w, "usage_hourly_query_failed", err)
 			return
 		}
 		sessions, err := QuerySessions(ctx, db, since, SessionFilter{
@@ -1030,20 +1065,19 @@ func DashboardHandler(db *sql.DB, password string) http.HandlerFunc {
 			MaxLatMS: maxLat,
 		})
 		if err != nil {
-			http.Error(w, "query error", http.StatusInternalServerError)
+			usageError(w, "usage_sessions_query_failed", err)
 			return
 		}
 		allModels, err := QueryDistinctModels(ctx, db, since)
 		if err != nil {
-			http.Error(w, "query error", http.StatusInternalServerError)
+			usageError(w, "usage_models_query_failed", err)
 			return
 		}
 		allProviders, err := QueryDistinctProviders(ctx, db, since)
 		if err != nil {
-			http.Error(w, "query error", http.StatusInternalServerError)
+			usageError(w, "usage_providers_query_failed", err)
 			return
 		}
-	
 
 		displayRows := make([]usageRowDisplay, len(usageRows))
 		for i, ur := range usageRows {
@@ -1123,11 +1157,21 @@ func DashboardHandler(db *sql.DB, password string) http.HandlerFunc {
 		var hMaxLat, hMaxCost float64
 		var hMaxInTok, hMaxOutTok int64
 		for _, p := range hourly {
-			if p.Calls > hMaxCalls       { hMaxCalls  = p.Calls     }
-			if p.AvgLatMS > hMaxLat      { hMaxLat    = p.AvgLatMS  }
-			if p.CostUSD > hMaxCost      { hMaxCost   = p.CostUSD   }
-			if p.InTokens > hMaxInTok    { hMaxInTok  = p.InTokens  }
-			if p.OutTokens > hMaxOutTok  { hMaxOutTok = p.OutTokens }
+			if p.Calls > hMaxCalls {
+				hMaxCalls = p.Calls
+			}
+			if p.AvgLatMS > hMaxLat {
+				hMaxLat = p.AvgLatMS
+			}
+			if p.CostUSD > hMaxCost {
+				hMaxCost = p.CostUSD
+			}
+			if p.InTokens > hMaxInTok {
+				hMaxInTok = p.InTokens
+			}
+			if p.OutTokens > hMaxOutTok {
+				hMaxOutTok = p.OutTokens
+			}
 		}
 
 		data := dashData{
@@ -1161,9 +1205,14 @@ func DashboardHandler(db *sql.DB, password string) http.HandlerFunc {
 		}
 
 		if err := renderTemplatePage(w, pageData{Title: "Usage", ActiveSection: sectionUsage, HasAuth: password != ""}, dashTmpl, data); err != nil {
-			http.Error(w, "render error", http.StatusInternalServerError)
+			usageError(w, "usage_render_failed", err)
 		}
 	}
+}
+
+func usageError(w http.ResponseWriter, code string, err error) {
+	slog.Error("dashboard usage unavailable", "code", code, "error", err)
+	http.Error(w, "Usage information is temporarily unavailable.", http.StatusInternalServerError)
 }
 
 // SessionHandler handles GET /dashboard/session/{bucketTS}.
@@ -1394,14 +1443,21 @@ func buildDistBars(rows []UsageRow, key string) []ModelBar {
 		}
 	}
 	var total int64
-	for _, v := range totals { total += v }
+	for _, v := range totals {
+		total += v
+	}
 	if total == 0 {
 		return nil
 	}
 	// sort by calls desc
-	type kv struct{ k string; v int64 }
+	type kv struct {
+		k string
+		v int64
+	}
 	sorted := make([]kv, 0, len(totals))
-	for k, v := range totals { sorted = append(sorted, kv{k, v}) }
+	for k, v := range totals {
+		sorted = append(sorted, kv{k, v})
+	}
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].v > sorted[j].v })
 	bars := make([]ModelBar, len(sorted))
 	for i, item := range sorted {

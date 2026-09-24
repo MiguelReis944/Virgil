@@ -11,12 +11,14 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/MiguelReis944/Virgil/internal/config"
+	"github.com/MiguelReis944/Virgil/internal/settings"
 	"github.com/MiguelReis944/Virgil/internal/storage"
 )
 
@@ -380,6 +382,51 @@ func TestPanelRoutesUseUnifiedNavigationAndSecurityContract(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestConfiguredServerUsesOperationalHealthAndSettingsPages(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "virgil.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, err := storage.NewJournal(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		journal.Close()
+		_ = db.Close()
+	}()
+	configPath := filepath.Join(t.TempDir(), "virgil.toml")
+	raw := []byte("[server]\nlisten='127.0.0.1:8787'\nlog_level='info'\n[storage]\npath='./data/virgil.db'\nretention_days=14\n")
+	if err := os.WriteFile(configPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := settings.HashFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied, err := config.Load(configPath, os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewServer(applied, Dependencies{
+		DB: db, Recorder: journal, Settings: settings.New(configPath),
+		AppliedConfigHash: hash, StartedAt: time.Now().Add(-time.Hour), Version: "test-version",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]string{
+		"/dashboard/health":   "test-version",
+		"/dashboard/settings": "14 days",
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("%s status=%d body=%s", path, rec.Code, rec.Body.String())
+		}
 	}
 }
 

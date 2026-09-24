@@ -12,3 +12,4 @@ __pycache__/
 *.egg-info/
 virgil.toml
 control.token
+/.tmp-go-cache/

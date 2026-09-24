@@ -12,12 +12,12 @@ const costExpr = `COALESCE(CAST(json_extract(payload, '$.actual_cost') AS REAL),
 
 // Summary holds aggregate metrics for the period.
 type Summary struct {
-	TotalCalls         int64
-	TotalErrors        int64
-	TotalCost          float64
-	AvgLatMS           float64
-	TotalInputTokens   int64
-	TotalOutputTokens  int64
+	TotalCalls        int64
+	TotalErrors       int64
+	TotalCost         float64
+	AvgLatMS          float64
+	TotalInputTokens  int64
+	TotalOutputTokens int64
 }
 
 // UsageRow holds per-provider/model aggregated metrics.
@@ -32,17 +32,17 @@ type UsageRow struct {
 
 // HourPoint is one bar/point in the hourly charts.
 type HourPoint struct {
-	Label    string
-	CostUSD  float64
-	Calls    int64
-	Errors   int64
-	AvgLatMS float64
+	Label     string
+	CostUSD   float64
+	Calls     int64
+	Errors    int64
+	AvgLatMS  float64
 	InTokens  int64
 	OutTokens int64
 	// render helpers
-	BarX      int
-	BarW      int // bar width in SVG units
-	BarCX     int // bar center X for line chart points
+	BarX  int
+	BarW  int // bar width in SVG units
+	BarCX int // bar center X for line chart points
 	// normalised heights 0-80 (chart area height)
 	BarHeight int // cost
 	CallsH    int
@@ -54,7 +54,7 @@ type HourPoint struct {
 
 // SessionRow is events grouped into a 1-minute bucket per model.
 type SessionRow struct {
-	BucketTS  int64  // unix seconds, start of the 1-min window
+	BucketTS  int64 // unix seconds, start of the 1-min window
 	Model     string
 	Providers string // comma-separated distinct providers
 	Calls     int64
@@ -165,10 +165,19 @@ WHERE created_at_unix_ns >= ?`
 
 // QueryHourlySeries returns bar/line chart points for the last `hours` hours.
 func QueryHourlySeries(ctx context.Context, db *sql.DB, hours int) ([]HourPoint, error) {
-	since := time.Now().Add(-time.Duration(hours) * time.Hour)
-	const q = `
+	return QueryHourlySeriesAt(ctx, db, hours, time.Now())
+}
+
+// QueryHourlySeriesAt is QueryHourlySeries with an injectable clock for deterministic tests.
+func QueryHourlySeriesAt(ctx context.Context, db *sql.DB, hours int, now time.Time) ([]HourPoint, error) {
+	since := now.Add(-time.Duration(hours) * time.Hour)
+	labelExpr := `strftime('%H:00', datetime(created_at_unix_ns / 1000000000, 'unixepoch', 'localtime'))`
+	if hours > 24 {
+		labelExpr = `strftime('%m-%d %H:00', datetime(created_at_unix_ns / 1000000000, 'unixepoch', 'localtime'))`
+	}
+	q := `
 SELECT
-    strftime('%H:00', datetime(created_at_unix_ns / 1000000000, 'unixepoch', 'localtime')) AS hour_label,
+    ` + labelExpr + ` AS hour_label,
     SUM(` + costExpr + `)                                                       AS cost,
     COUNT(*)                                                                    AS calls,
     SUM(CASE WHEN status != 'success' THEN 1 ELSE 0 END)                       AS errors,
@@ -194,11 +203,11 @@ ORDER BY MIN(created_at_unix_ns)`
 		if err := rows.Scan(&p.Label, &cost, &calls, &errors, &lat, &inTok, &outTok); err != nil {
 			return nil, err
 		}
-		p.CostUSD  = cost.Float64
-		p.Calls    = calls.Int64
-		p.Errors   = errors.Int64
+		p.CostUSD = cost.Float64
+		p.Calls = calls.Int64
+		p.Errors = errors.Int64
 		p.AvgLatMS = lat.Float64
-		p.InTokens  = inTok.Int64
+		p.InTokens = inTok.Int64
 		p.OutTokens = outTok.Int64
 		pts = append(pts, p)
 	}
@@ -214,32 +223,50 @@ ORDER BY MIN(created_at_unix_ns)`
 	}
 	slot := chartW / n
 	bw := slot - 4
-	if bw < 3 { bw = 3 }
-	if bw > 22 { bw = 22 }
+	if bw < 3 {
+		bw = 3
+	}
+	if bw > 22 {
+		bw = 22
+	}
 
 	maxCost, maxCalls, maxLat, maxInTok, maxOutTok := 0.0, int64(0), 0.0, int64(0), int64(0)
 	for _, p := range pts {
-		if p.CostUSD   > maxCost   { maxCost   = p.CostUSD   }
-		if p.Calls     > maxCalls  { maxCalls  = p.Calls     }
-		if p.AvgLatMS  > maxLat    { maxLat    = p.AvgLatMS  }
-		if p.InTokens  > maxInTok  { maxInTok  = p.InTokens  }
-		if p.OutTokens > maxOutTok { maxOutTok = p.OutTokens }
+		if p.CostUSD > maxCost {
+			maxCost = p.CostUSD
+		}
+		if p.Calls > maxCalls {
+			maxCalls = p.Calls
+		}
+		if p.AvgLatMS > maxLat {
+			maxLat = p.AvgLatMS
+		}
+		if p.InTokens > maxInTok {
+			maxInTok = p.InTokens
+		}
+		if p.OutTokens > maxOutTok {
+			maxOutTok = p.OutTokens
+		}
 	}
 	norm := func(v, max float64) int {
-		if max == 0 { return 0 }
+		if max == 0 {
+			return 0
+		}
 		h := int(v / max * float64(chartH))
-		if h < 1 && v > 0 { h = 1 }
+		if h < 1 && v > 0 {
+			h = 1
+		}
 		return h
 	}
 	for i := range pts {
-		pts[i].BarX  = chartX0 + i*slot + (slot-bw)/2
-		pts[i].BarW  = bw
+		pts[i].BarX = chartX0 + i*slot + (slot-bw)/2
+		pts[i].BarW = bw
 		pts[i].BarCX = chartX0 + i*slot + slot/2
 		pts[i].BarHeight = norm(pts[i].CostUSD, maxCost)
-		pts[i].CallsH    = norm(float64(pts[i].Calls), float64(maxCalls))
-		pts[i].LatH      = norm(pts[i].AvgLatMS, maxLat)
-		pts[i].InTokH    = norm(float64(pts[i].InTokens), float64(maxInTok))
-		pts[i].OutTokH   = norm(float64(pts[i].OutTokens), float64(maxOutTok))
+		pts[i].CallsH = norm(float64(pts[i].Calls), float64(maxCalls))
+		pts[i].LatH = norm(pts[i].AvgLatMS, maxLat)
+		pts[i].InTokH = norm(float64(pts[i].InTokens), float64(maxInTok))
+		pts[i].OutTokH = norm(float64(pts[i].OutTokens), float64(maxOutTok))
 		if pts[i].Calls > 0 {
 			pts[i].ErrRateH = norm(float64(pts[i].Errors)/float64(pts[i].Calls)*100, 100)
 		}

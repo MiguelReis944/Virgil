@@ -130,6 +130,34 @@ func TestAuthenticatedPanelHandlersUseOneShellContract(t *testing.T) {
 	}
 }
 
+func TestUsageHandlerProvidesActionableEmptyAndGenericErrorStates(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "virgil.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, err := storage.NewJournal(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	DashboardHandler(db, "").ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dashboard/usage", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Run an application through Virgil") {
+		t.Fatalf("empty state status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	journal.Close()
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	DashboardHandler(db, "").ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dashboard/usage", nil))
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "Usage information is temporarily unavailable") {
+		t.Fatalf("error state status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(strings.ToLower(rec.Body.String()), "database") {
+		t.Fatalf("error state exposed internal details: %s", rec.Body.String())
+	}
+}
+
 func TestPanelHandlersRedirectWhenAuthenticationIsRequired(t *testing.T) {
 	db, err := storage.Open(filepath.Join(t.TempDir(), "virgil.db"))
 	if err != nil {
