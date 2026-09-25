@@ -39,7 +39,7 @@ func TestResponsesStreamUsageAndUnsupportedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.Config{Providers: map[string]config.ProviderConfig{"openai": {Type: "openai", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Local: true}}}
+	cfg := config.Config{Providers: map[string]config.ProviderConfig{"openai": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Local: true}}}
 	h, err := NewServer(cfg, Dependencies{DB: db, Recorder: j, Policy: e, InstallationID: j.InstallationID()})
 	if err != nil {
 		t.Fatal(err)

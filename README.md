@@ -2,7 +2,7 @@
 
 Virgil is a local circuit breaker for supervised AI agents. One executable runs the core, gateway, and browser panel on the same machine. A policy block is recorded and terminates the supervised process tree. The panel is available at `/dashboard` on the loopback address.
 
-**Status: local developer beta.** Use it on one machine with an agent whose OpenAI-compatible requests can be routed through Virgil. The supervised circuit breaker has automated end-to-end coverage; external user pilots and the [release acceptance checklist](docs/release-acceptance.md) are still required before calling it a finished product. Start with the [local beta pilot guide](docs/pilots/local-beta.md).
+**Status: local developer beta.** Use it on one machine with an agent whose OpenAI Responses, Chat Completions, or Anthropic Messages requests can be routed through Virgil. The supervised circuit breaker has automated end-to-end coverage; external user pilots and the [release acceptance checklist](docs/release-acceptance.md) are still required before calling it a finished product. Start with the [local beta pilot guide](docs/pilots/local-beta.md).
 
 ## Current functionality
 
@@ -10,7 +10,7 @@ The gateway supports configured OpenAI-compatible requests, provider adapters, l
 
 `virgil` starts the local core and opens the browser panel; `virgil serve` remains an alias. `virgil run` starts a child under core supervision, supplies the gateway address and run credential, and terminates its process tree on a policy block, deadline, or interruption. `virgil version` displays the binary's version, commit, and build date.
 
-The panel includes Providers, Protections, Executions, Health, Settings, and Usage. Start with Providers and Protections, then launch a supervised child and inspect its result under Executions. See [the runner guide](docs/runner.md) for the current command and supervision behavior. For Codex CLI, use the [local Responses pilot](docs/integrations/codex.md).
+The panel includes Providers, Protections, Executions, Health, Settings, and Usage. Start with Providers and Protections, then launch a supervised child and inspect its result under Executions. See [the runner guide](docs/runner.md), the [Codex](docs/integrations/codex.md) and [Claude Code](docs/integrations/claude-code.md) pilots, [desktop access](docs/integrations/desktop.md), and [OmniRoute as upstream](docs/integrations/omniroute.md).
 
 This local product does not require an account or hosted Control Plane. It currently binds to loopback; secure LAN operation is a separate future stage. Historical team-service concepts are retained later in this README as deferred design context.
 

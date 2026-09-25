@@ -159,13 +159,13 @@ func (router *router) responses(w http.ResponseWriter, req *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "model_not_configured")
 		return
 	}
-	if selected.providerType != "openai" {
+	if selected.providerType != "openai" && selected.providerType != "openai-compatible" {
 		writeAPIError(w, http.StatusBadRequest, "unsupported_request")
 		return
 	}
 	identity, supervised := identityFromRequest(req)
 	var key string
-	if supervised && identity.UseConfiguredKey {
+	if identity.UseConfiguredKey {
 		key = router.getenv(selected.keyEnv)
 		ok = selected.keyEnv != "" && key != ""
 	} else {
@@ -176,7 +176,15 @@ func (router *router) responses(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	runID := identity.RunID
-	if !supervised {
+	if runID == "desktop_codex" {
+		var metadata struct {
+			SessionID string `json:"session_id"`
+		}
+		if err := json.Unmarshal(input.ClientMetadata, &metadata); err == nil {
+			runID = desktopSessionRunID("codex", metadata.SessionID)
+		}
+	}
+	if runID == "" {
 		runID, err = telemetry.ResolveRunID(req.Header.Get("X-Virgil-Run-ID"))
 		if err != nil {
 			writeAPIError(w, http.StatusInternalServerError, "run_id_unavailable")

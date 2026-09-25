@@ -6,7 +6,7 @@ Start the local core first (`virgil` or `virgil serve`). It hosts the gateway an
 virgil run --config ./virgil.toml --deadline 30m -- python my_agent.py
 ```
 
-On Windows, use `virgil.exe` and the path to your agent. The agent must use the OpenAI-compatible base URL and token supplied by `virgil run`; direct provider traffic bypasses Virgil. The command injects `VIRGIL_RUN_ID`, `VIRGIL_GATEWAY_URL`, `VIRGIL_RUN_TOKEN`, `OPENAI_BASE_URL`, `OPENAI_API_BASE`, and `OPENAI_API_KEY` into the child. It removes configured provider credentials and common secret variables from the inherited child environment. Do not override the injected gateway address or run token in the agent.
+On Windows, use `virgil.exe` and the path to your agent. The agent must use the gateway URL and token supplied by `virgil run`; direct provider traffic bypasses Virgil. The command injects `VIRGIL_RUN_ID`, `VIRGIL_GATEWAY_URL`, `VIRGIL_RUN_TOKEN`, `OPENAI_BASE_URL`, `OPENAI_API_BASE`, `OPENAI_API_KEY`, `ANTHROPIC_BASE_URL`, and `ANTHROPIC_AUTH_TOKEN` into the child. It removes configured provider credentials and common secret variables from the inherited child environment. Do not override the injected gateway address or run token in the agent.
 
 | Flag | Purpose |
 | --- | --- |
@@ -18,4 +18,4 @@ On Windows, use `virgil.exe` and the path to your agent. The agent must use the 
 
 Before the child starts, the runner registers the execution with the core and connects to its control stream. A policy block is saved, delivered to the runner, and stops the child process tree. A lost control stream also stops the tree. The runner records the outcome and exits with a nonzero status for a blocked or failed execution. The root process and its descendants are supervised on Windows, Linux, and macOS. Child stdout and stderr remain in the terminal; Virgil does not save them.
 
-Set limits in the panel's **Protections** page, restart the core, and inspect the result in **Executions**. See [the local beta pilot](pilots/local-beta.md) for a reproducible test and the evidence to collect. The gateway accepts OpenAI-compatible chat completions and native stateless OpenAI Responses calls. See [the Codex CLI pilot](integrations/codex.md) for the Responses setup. It does not expose an inbound Anthropic Messages route.
+Set limits in the panel's **Protections** page, restart the core, and inspect the result in **Executions**. See [the local beta pilot](pilots/local-beta.md) for a reproducible test and the evidence to collect. The gateway accepts OpenAI-compatible chat completions, native stateless OpenAI Responses, and Anthropic Messages calls. See the [Codex](integrations/codex.md) and [Claude Code](integrations/claude-code.md) pilots. Desktop access uses a [separate token](integrations/desktop.md) and cannot terminate the client process.

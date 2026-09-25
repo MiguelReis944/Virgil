@@ -108,6 +108,7 @@ func childEnvironment(spec RunSpec, runID string) []string {
 		env = append(env, "VIRGIL_GATEWAY_URL="+spec.GatewayURL)
 		env = append(env, "OPENAI_BASE_URL="+spec.GatewayURL+"/v1")
 		env = append(env, "OPENAI_API_BASE="+spec.GatewayURL+"/v1")
+		env = append(env, "ANTHROPIC_BASE_URL="+spec.GatewayURL)
 	}
 	for key, value := range spec.Env {
 		env = append(env, key+"="+value)

@@ -1,6 +1,6 @@
 # Codex CLI through Virgil (local pilot)
 
-This pilot sends Codex model requests through Virgil's `/v1/responses` gateway. Virgil applies its local call, token, cost, provider, model, and tool limits before forwarding each request. A policy block ends a supervised CLI process tree and appears in **Executions**. The provider credential stays in the Virgil core process; Codex receives only a short lived execution token.
+This pilot sends Codex model requests through Virgil's `/v1/responses` gateway. Virgil applies its local call, token, cost, provider, model, and tool limits before forwarding each request. A policy block ends a supervised CLI process tree and appears in **Executions**. The provider credential stays in the Virgil core process; Codex receives only a short lived execution token. For Codex desktop, use the separate [desktop access setup](desktop.md).
 
 ## Set up
 
@@ -27,9 +27,11 @@ The loopback address is local to the machine running Codex and Virgil. If the co
 
 ## Scope and limits
 
-- Codex currently uses a custom `responses` provider. The gateway accepts stateless foreground Responses calls for providers of type `openai`; it rejects stored/background calls and `previous_response_id` so model context does not bypass local inspection. It removes Codex's `client_metadata` before forwarding.
-- This setup supervises the **Codex CLI process**. Launching the already running Codex desktop app does not make it a child of `virgil run`, so its process tree cannot be stopped by this pilot. Do not infer desktop protection from CLI data.
+- Codex currently uses a custom `responses` provider. The gateway accepts stateless foreground Responses calls for providers of type `openai` or `openai-compatible` when the upstream implements `/v1/responses`; it rejects stored/background calls and `previous_response_id` so model context does not bypass local inspection. It removes Codex's `client_metadata` before forwarding.
+- This setup supervises the **Codex CLI process**. The [desktop setup](desktop.md) routes model calls through Virgil with a separate token, but its process tree cannot be stopped by this pilot. Do not infer desktop process supervision from CLI data.
 - The gateway sees model traffic sent to its configured provider. Local shell commands, files, and network calls made by Codex tools are governed by Codex's own controls; Virgil records and limits tool declarations and returned tool calls but is not a general OS firewall.
 - A real provider account and live Codex run are needed to validate model support, billing, and every Codex feature. The automated tests use a synthetic provider.
 
-Codex custom provider settings are documented by [OpenAI](https://developers.openai.com/codex/config-file/config-reference). OmniRoute's [Codex guide](https://github.com/Emredost/omniroute/blob/main/docs/guides/CODEX-CLI-CONFIGURATION.md) uses the same custom provider mechanism.
+Codex custom provider settings are documented by [OpenAI](https://developers.openai.com/codex/config-file/config-reference). OmniRoute's [Codex guide](https://github.com/diegosouzapw/OmniRoute/blob/main/docs/guides/CODEX-CLI-CONFIGURATION.md) uses the same custom provider mechanism.
+
+To use OmniRoute as the upstream model router, see [OmniRoute upstream](omniroute.md). Its HTTP Responses endpoint can be configured as an `openai-compatible` provider. Its separate WebSocket bridge for ChatGPT-backed Codex sessions is outside this pilot.

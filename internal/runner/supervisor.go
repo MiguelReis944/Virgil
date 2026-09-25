@@ -53,6 +53,7 @@ func superviseWithStarter(ctx context.Context, spec SupervisionSpec, start func(
 	}
 	run.Env["OPENAI_API_KEY"] = registration.RunToken
 	run.Env["VIRGIL_RUN_TOKEN"] = registration.RunToken
+	run.Env["ANTHROPIC_AUTH_TOKEN"] = registration.RunToken
 	proc, err := start(ctx, run)
 	if err != nil {
 		result := executions.FinishRequest{State: executions.StateFailed, ExitCode: -1, StopReason: "start_failed", TerminationStatus: executions.TerminationNotRequired}
@@ -205,7 +206,7 @@ func credentialEnvKey(key string) bool {
 
 func reservedChildEnvKey(key string) bool {
 	switch strings.ToUpper(key) {
-	case "VIRGIL_RUN_ID", "VIRGIL_GATEWAY_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE", "ANTHROPIC_BASE_URL":
+	case "VIRGIL_RUN_ID", "VIRGIL_GATEWAY_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN":
 		return true
 	default:
 		return false

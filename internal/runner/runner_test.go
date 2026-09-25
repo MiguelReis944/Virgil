@@ -165,13 +165,17 @@ func TestRunnerContextCancellation(t *testing.T) {
 	_ = os.Getenv // suppress unused import warning
 }
 
-func TestRunnerDoesNotAdvertiseAnthropicInboundRoute(t *testing.T) {
+func TestRunnerAdvertisesAnthropicInboundRoute(t *testing.T) {
 	t.Setenv("ANTHROPIC_BASE_URL", "https://anthropic.example")
 	env := childEnvironment(RunSpec{GatewayURL: "http://127.0.0.1:8787"}, "run_fixture")
+	found := false
 	for _, entry := range env {
 		if entry == "ANTHROPIC_BASE_URL=http://127.0.0.1:8787" {
-			t.Fatal("runner injected gateway URL as an unsupported Anthropic inbound route")
+			found = true
 		}
+	}
+	if !found {
+		t.Fatal("runner did not route Anthropic requests through Virgil")
 	}
 }
 

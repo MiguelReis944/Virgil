@@ -167,7 +167,7 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 	}
 	identity, supervised := identityFromRequest(req)
 	var key string
-	if supervised && identity.UseConfiguredKey {
+	if identity.UseConfiguredKey {
 		key = router.getenv(selected.keyEnv)
 		ok = selected.keyEnv != "" && key != ""
 	} else {
@@ -178,7 +178,7 @@ func (router *router) chat(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	runID := identity.RunID
-	if !supervised {
+	if runID == "" {
 		var err error
 		runID, err = telemetry.ResolveRunID(req.Header.Get("X-Virgil-Run-ID"))
 		if err != nil {

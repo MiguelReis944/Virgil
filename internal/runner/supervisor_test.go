@@ -201,7 +201,7 @@ func TestSupervisorRejectsChildCredentialAndIdentityOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"VIRGIL_RUN_ID", "OPENAI_BASE_URL"} {
+	for _, key := range []string{"VIRGIL_RUN_ID", "OPENAI_BASE_URL", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"} {
 		_, err := Supervise(context.Background(), SupervisionSpec{Run: RunSpec{Command: []string{"synthetic"}, Env: map[string]string{key: "untrusted"}}, Control: client})
 		if err == nil || !strings.Contains(err.Error(), "child environment") {
 			t.Errorf("accepted child override %q: %v", key, err)
