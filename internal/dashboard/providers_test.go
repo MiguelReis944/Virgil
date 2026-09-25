@@ -30,6 +30,22 @@ func TestProvidersHandlerRendersSafeIntegrationValues(t *testing.T) {
 	}
 }
 
+func TestProvidersHandlerUsesConfiguredGatewayAddress(t *testing.T) {
+	store := testSettingsStore(t)
+	if err := store.Update(context.Background(), func(cfg *config.Config) error {
+		cfg.Server.Listen = "127.0.0.1:9999"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	ProvidersHandler(store, "").ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dashboard/providers", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "OPENAI_BASE_URL=http://127.0.0.1:9999/v1") || strings.Contains(body, "127.0.0.1:8787/v1") {
+		t.Fatal("integration instructions use wrong gateway address")
+	}
+}
+
 func TestProvidersHandlerRejectsSecretValuesAndRequiresCSRF(t *testing.T) {
 	store := testSettingsStore(t)
 	h := ProvidersHandler(store, "")

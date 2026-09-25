@@ -58,10 +58,11 @@ type providersPage struct {
 	Providers   []providerView
 	CSRF, Error string
 	Onboarding  bool
+	GatewayURL  string
 }
 
 const providersBody = `{{define "content"}}{{if .Onboarding}}<div class="flash">Add your first provider to route supervised AI requests through Virgil.</div>{{end}}{{if .Error}}<div class="form-err">{{.Error}}</div>{{end}}
-<div class="card"><div class="card-label">OpenAI-compatible client integration</div><p>Base URL: <code>http://127.0.0.1:8787/v1</code></p><p>Set <code>OPENAI_BASE_URL=http://127.0.0.1:8787/v1</code>, <code>OPENAI_API_KEY=$VIRGIL_RUN_TOKEN</code>, and use the model ID shown below. <code>VIRGIL_RUN_TOKEN</code> is supplied by <code>virgil run</code>.</p></div>
+<div class="card"><div class="card-label">Run a protected agent</div><p>1. Save a provider here and set its credential environment variable for the Virgil process, if required. 2. Set a limit in <a href="/dashboard/protections">Protections</a>. 3. Restart Virgil, then launch your agent with <code>virgil run -- &lt;command&gt;</code>. The result appears under <a href="/dashboard/executions">Executions</a>.</p><p>For an OpenAI-compatible client, use <code>OPENAI_BASE_URL={{.GatewayURL}}</code>, <code>OPENAI_API_KEY=$VIRGIL_RUN_TOKEN</code>, and the model ID shown below. <code>virgil run</code> supplies these environment variables to the child. Only requests sent through Virgil are protected.</p></div>
 <form method="post" action="/dashboard/providers"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><div class="table-wrap"><table><thead><tr><th>Name</th><th>Type</th><th>Model ID</th><th>Base URL</th><th>Location</th><th>Credential env name</th></tr></thead><tbody>{{range .Providers}}<tr><td><input name="provider_name" value="{{.Name}}"></td><td><input name="provider_type" value="{{.Type}}"></td><td><input name="provider_model" value="{{.Model}}"></td><td><input name="provider_base_url" value="{{.BaseURL}}"></td><td>{{.Location}}<input type="hidden" name="provider_local" value="{{if eq .Location "Local"}}true{{else}}false{{end}}"></td><td><input name="provider_api_key_env" value="{{.APIKeyEnv}}" placeholder="OPENAI_API_KEY">{{if .CredentialConfigured}}<span class="badge badge-success">configured</span>{{end}}</td></tr>{{else}}<tr><td colspan="6">No providers configured.</td></tr>{{end}}<tr><td><input name="provider_name"></td><td><input name="provider_type" value="openai-compatible"></td><td><input name="provider_model"></td><td><input name="provider_base_url"></td><td><select name="provider_local"><option value="false">Remote</option><option value="true">Local</option></select></td><td><input name="provider_api_key_env" placeholder="OPENAI_API_KEY"></td></tr></tbody></table></div><button class="btn-primary" type="submit">Save providers</button></form>{{end}}`
 
 func ProvidersHandler(store *settings.Store, password string) http.Handler {
@@ -126,6 +127,7 @@ func renderProvidersWithFlash(w http.ResponseWriter, password string, page provi
 	if err != nil {
 		return err
 	}
+	page.GatewayURL = "http://" + cfg.Server.Listen + "/v1"
 	names := make([]string, 0, len(cfg.Providers))
 	for n := range cfg.Providers {
 		names = append(names, n)

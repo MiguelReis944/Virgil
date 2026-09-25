@@ -12,7 +12,7 @@ func TestProtectionsHandlerRendersEveryLocalGuardrail(t *testing.T) {
 	h := ProtectionsHandler(testSettingsStore(t), "")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dashboard/protections", nil))
-	for _, want := range []string{"Calls per run", "Input tokens per run", "Output tokens per run", "Total tokens per run", "Cost per run", "Duration", "Tool calls", "Allowed providers", "Allowed models", "Allowed tools", "Daily calls", "Daily cost", "Repetition rule", "csrf_token"} {
+	for _, want := range []string{"Calls per run", "Input tokens per run", "Output tokens per run", "Total tokens per run", "Cost per run", "Duration", "Tool calls", "Allowed providers", "Allowed models", "Allowed tools", "Daily calls", "Daily cost", "Repetition rule", "Zero or a blank numeric limit disables that limit", "csrf_token"} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("missing %q", want)
 		}
