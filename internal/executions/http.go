@@ -102,6 +102,8 @@ func (h *HTTPHandler) Register(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid run id", http.StatusBadRequest)
 		case errors.Is(err, ErrRunActive):
 			http.Error(w, "run already active", http.StatusConflict)
+		case errors.Is(err, ErrRunExists):
+			http.Error(w, "run id already exists", http.StatusConflict)
 		default:
 			http.Error(w, "registration failed", http.StatusInternalServerError)
 		}

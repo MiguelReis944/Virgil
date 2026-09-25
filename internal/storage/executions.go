@@ -17,11 +17,18 @@ func (j *Journal) StartExecution(ctx context.Context, runID string, startedAt ti
 	if runID == "" || startedAt.IsZero() {
 		return fmt.Errorf("start execution: invalid run ID or time")
 	}
-	_, err := j.db.ExecContext(ctx,
-		`INSERT INTO executions (run_id, state, started_at_unix_ns) VALUES (?, 'starting', ?)`,
+	result, err := j.db.ExecContext(ctx,
+		`INSERT INTO executions (run_id, state, started_at_unix_ns) VALUES (?, 'starting', ?) ON CONFLICT(run_id) DO NOTHING`,
 		runID, startedAt.UTC().UnixNano())
 	if err != nil {
 		return fmt.Errorf("start execution: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("start execution rows affected: %w", err)
+	}
+	if count == 0 {
+		return executions.ErrRunExists
 	}
 	return nil
 }

@@ -122,6 +122,18 @@ func TestControlAuthenticationAndRegistration(t *testing.T) {
 	registerRun(t, server, bearer, "run_a")
 }
 
+func TestControlRejectsPreviouslyUsedRunID(t *testing.T) {
+	server, _, journal, bearer := controlFixture(t)
+	if err := journal.StartExecution(context.Background(), "run_used", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	res := controlRequest(t, http.MethodPost, server.URL+"/api/executions", bearer, `{"run_id":"run_used"}`)
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("duplicate registration status = %d, want %d", res.StatusCode, http.StatusConflict)
+	}
+}
+
 func TestControlRejectsOversizedAndUnknownFields(t *testing.T) {
 	server, _, _, bearer := controlFixture(t)
 	for _, tc := range []struct {

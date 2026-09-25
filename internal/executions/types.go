@@ -99,6 +99,7 @@ type Store interface {
 var (
 	ErrInvalidRunID         = errors.New("invalid run id")
 	ErrRunActive            = errors.New("run already active")
+	ErrRunExists            = errors.New("run id already exists")
 	ErrRunNotFound          = errors.New("run not found")
 	ErrRunTokenInvalid      = errors.New("invalid run token")
 	ErrSignalTokenInvalid   = errors.New("invalid signal token")

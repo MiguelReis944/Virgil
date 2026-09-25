@@ -53,8 +53,8 @@ func TestExecutionStartFailureAndDuplicateID(t *testing.T) {
 	if err := j.StartExecution(ctx, "run_a", now); err != nil {
 		t.Fatal(err)
 	}
-	if err := j.StartExecution(ctx, "run_a", now); err == nil {
-		t.Fatal("duplicate ID accepted")
+	if err := j.StartExecution(ctx, "run_a", now); !errors.Is(err, executions.ErrRunExists) {
+		t.Fatalf("duplicate ID error = %v, want ErrRunExists", err)
 	}
 	if err := j.FinishExecution(ctx, executions.ExecutionResult{RunID: "run_a", State: executions.StateFailed, EndedAt: now.Add(time.Second), ExitCode: 1}); err != nil {
 		t.Fatal(err)
