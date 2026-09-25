@@ -25,12 +25,13 @@ import (
 const maxChatRequest = 1 << 20
 
 type route struct {
-	adapter      providers.Adapter
-	keyEnv       string
-	provider     string
-	validate     func(json.RawMessage) error
-	baseURL      string
-	providerType string
+	adapter          providers.Adapter
+	keyEnv           string
+	provider         string
+	validate         func(json.RawMessage) error
+	baseURL          string
+	providerType     string
+	responsesBackend string
 }
 
 type router struct {
@@ -83,12 +84,13 @@ func newRouter(cfg config.Config, client *http.Client, getenv func(string) strin
 	}
 	for model, registration := range registry {
 		r.models[model] = route{
-			adapter:      registration.Adapter,
-			keyEnv:       registration.KeyEnv,
-			provider:     registration.Provider,
-			validate:     registration.Validate,
-			baseURL:      cfg.Providers[registration.Provider].BaseURL,
-			providerType: cfg.Providers[registration.Provider].Type,
+			adapter:          registration.Adapter,
+			keyEnv:           registration.KeyEnv,
+			provider:         registration.Provider,
+			validate:         registration.Validate,
+			baseURL:          cfg.Providers[registration.Provider].BaseURL,
+			providerType:     cfg.Providers[registration.Provider].Type,
+			responsesBackend: cfg.Providers[registration.Provider].ResponsesBackend,
 		}
 	}
 	return r, nil

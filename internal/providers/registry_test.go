@@ -59,3 +59,24 @@ func TestRegistryAllowsExplicitLocalOllama(t *testing.T) {
 		t.Fatalf("ollama registration missing: %#v", registry)
 	}
 }
+
+func TestRegistryValidatesResponsesBackend(t *testing.T) {
+	for _, tc := range []struct {
+		name, providerType, backend string
+		wantErr                    bool
+	}{
+		{"native default", "openai-compatible", "", false},
+		{"chat translation", "openai-compatible", "chat-completions", false},
+		{"unknown backend", "openai-compatible", "something-else", true},
+		{"anthropic cannot translate", "anthropic", "chat-completions", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewRegistry(config.Config{Providers: map[string]config.ProviderConfig{
+				"fixture": {Type: tc.providerType, BaseURL: "https://example.invalid/v1", Model: "fixture-model", ResponsesBackend: tc.backend},
+			}}, nil)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("NewRegistry() error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -163,6 +164,13 @@ func (router *router) responses(w http.ResponseWriter, req *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "unsupported_request")
 		return
 	}
+	if selected.responsesBackend == "chat-completions" {
+		body, err = buildChatRequest(input)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, "unsupported_request")
+			return
+		}
+	}
 	identity, supervised := identityFromRequest(req)
 	var key string
 	if identity.UseConfiguredKey {
@@ -201,7 +209,11 @@ func (router *router) responses(w http.ResponseWriter, req *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_provider_config")
 		return
 	}
-	base.Path = strings.TrimRight(base.Path, "/") + "/responses"
+	endpoint := "/responses"
+	if selected.responsesBackend == "chat-completions" {
+		endpoint = "/chat/completions"
+	}
+	base.Path = strings.TrimRight(base.Path, "/") + endpoint
 	base.RawQuery, base.Fragment = "", ""
 	upstream, err := http.NewRequestWithContext(req.Context(), http.MethodPost, base.String(), bytes.NewReader(body))
 	if err != nil {
@@ -268,14 +280,31 @@ func (router *router) responses(w http.ResponseWriter, req *http.Request) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		result.Status, result.ErrorCode = "provider_error", "provider_http_"+http.StatusText(resp.StatusCode)
+		result.Status, result.ErrorCode = "provider_error", "provider_http_"+strconv.Itoa(resp.StatusCode)
+		slog.Warn("Responses provider returned an error", "provider", selected.provider, "status", resp.StatusCode)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
 		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"message": "provider request failed", "type": "provider_error", "code": "provider_error"}})
 		return
 	}
 	if input.Stream {
-		result, err = streamResponses(req.Context(), resp.Body, w)
+		if selected.responsesBackend == "chat-completions" {
+			var translated []byte
+			translated, err = translateChatStream(req.Context(), resp.Body, w)
+			if err == nil {
+				result, err = inspectResponsesPayload(translated)
+			}
+			if err != nil {
+				if req.Context().Err() != nil {
+					result.Status, result.ErrorCode = "client_cancelled", "client_cancelled"
+				} else {
+					result.Status, result.ErrorCode = "provider_error", "provider_stream_error"
+					writeResponsesStreamError(w)
+				}
+			}
+		} else {
+			result, err = streamResponses(req.Context(), resp.Body, w)
+		}
 		if err != nil {
 			slog.Warn("Responses stream failed", "code", "provider_stream_error")
 		}
@@ -286,6 +315,14 @@ func (router *router) responses(w http.ResponseWriter, req *http.Request) {
 		result.Status, result.ErrorCode = "provider_error", "provider_response_error"
 		writeAPIError(w, http.StatusBadGateway, "provider_response_error")
 		return
+	}
+	if selected.responsesBackend == "chat-completions" {
+		raw, err = translateChatResponse(raw)
+		if err != nil {
+			result.Status, result.ErrorCode = "provider_error", "provider_response_error"
+			writeAPIError(w, http.StatusBadGateway, "provider_response_error")
+			return
+		}
 	}
 	result, err = inspectResponsesPayload(raw)
 	if err != nil {

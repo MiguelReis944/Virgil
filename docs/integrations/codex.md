@@ -4,7 +4,7 @@ This pilot sends Codex model requests through Virgil's `/v1/responses` gateway. 
 
 ## Set up
 
-1. In **Providers**, add a provider with type `openai`, base URL `https://api.openai.com/v1`, your available model ID, and credential environment variable name `OPENAI_API_KEY`. Set that variable in the environment that starts Virgil. Save and restart the core. This requires an OpenAI Platform API key; a ChatGPT sign-in is a different authentication path.
+1. In **Providers**, add a provider. For NVIDIA hosted inference, use type `openai-compatible`, base URL `https://integrate.api.nvidia.com/v1`, model `meta/muse-glimmer-30b`, credential environment name `NVIDIA_API_KEY`, and **Responses → Translate Chat**. Set the credential in Virgil's ignored `.env`, save, and restart the core. For an OpenAI Responses provider, keep **Responses → Native**.
 2. Set a small call or cost limit in **Protections** and restart the core again. For a hard cost cap, also set `estimated_cost_per_call_usd` in the local configuration until model pricing is configured.
 3. From the project directory, start Codex as a child of Virgil. Use the model ID configured in **Providers** and the loopback address shown there. In PowerShell:
 
@@ -16,6 +16,7 @@ This pilot sends Codex model requests through Virgil's `/v1/responses` gateway. 
      -c 'model_providers.virgil.env_key="VIRGIL_RUN_TOKEN"' `
      -c 'model_providers.virgil.wire_api="responses"' `
      -c 'model_providers.virgil.requires_openai_auth=false' `
+     -c 'web_search="disabled"' `
      -m 'YOUR_MODEL_ID'
    ```
 
@@ -27,7 +28,8 @@ The loopback address is local to the machine running Codex and Virgil. If the co
 
 ## Scope and limits
 
-- Codex currently uses a custom `responses` provider. The gateway accepts stateless foreground Responses calls for providers of type `openai` or `openai-compatible` when the upstream implements `/v1/responses`; it rejects stored/background calls and `previous_response_id` so model context does not bypass local inspection. It removes Codex's `client_metadata` before forwarding.
+- Codex uses a custom `responses` provider. The gateway accepts stateless foreground calls. **Native** forwards to `/v1/responses`; **Translate Chat** maps supported text and function calls to `/v1/chat/completions`. It rejects stored/background calls and `previous_response_id` so model context does not bypass local inspection. It removes Codex's `client_metadata` before forwarding.
+- With **Translate Chat**, disable Codex web search as shown above. Chat Completions has no equivalent for the native `web_search` tool. Image, audio, and other unsupported options are rejected rather than silently omitted. NVIDIA may have different tool behavior from a native Responses model; test the intended workflows before relying on them.
 - This setup supervises the **Codex CLI process**. The [desktop setup](desktop.md) routes model calls through Virgil with a separate token, but its process tree cannot be stopped by this pilot. Do not infer desktop process supervision from CLI data.
 - The gateway sees model traffic sent to its configured provider. Local shell commands, files, and network calls made by Codex tools are governed by Codex's own controls; Virgil records and limits tool declarations and returned tool calls but is not a general OS firewall.
 - A real provider account and live Codex run are needed to validate model support, billing, and every Codex feature. The automated tests use a synthetic provider.

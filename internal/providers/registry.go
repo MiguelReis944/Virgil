@@ -32,6 +32,9 @@ func NewRegistry(cfg config.Config, client *http.Client) (Registry, error) {
 		modelCount[provider.Model]++
 	}
 	for name, provider := range cfg.Providers {
+		if provider.ResponsesBackend != "" && (provider.ResponsesBackend != "chat-completions" || provider.Type != "openai-compatible") {
+			return nil, fmt.Errorf("provider %s: unsupported responses backend", name)
+		}
 		if strings.Contains(name, ":") {
 			return nil, fmt.Errorf("provider name must not contain ':' (got %q)", name)
 		}

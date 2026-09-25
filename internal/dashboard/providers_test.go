@@ -81,7 +81,7 @@ func TestProvidersHandlerSavesEnvironmentReferenceWithoutSecret(t *testing.T) {
 	get := httptest.NewRecorder()
 	h.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/dashboard/providers", nil))
 	token := extractCSRF(t, get.Body.String())
-	form := url.Values{"csrf_token": {token}, "provider_name": {"remote"}, "provider_type": {"openai-compatible"}, "provider_model": {"model-x"}, "provider_base_url": {"https://api.example.com/v1"}, "provider_local": {"false"}, "provider_api_key_env": {"REMOTE_API_KEY"}}
+	form := url.Values{"csrf_token": {token}, "provider_name": {"remote"}, "provider_type": {"openai-compatible"}, "provider_model": {"model-x"}, "provider_base_url": {"https://api.example.com/v1"}, "provider_local": {"false"}, "provider_api_key_env": {"REMOTE_API_KEY"}, "provider_responses_backend": {"chat-completions"}}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/dashboard/providers", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -95,6 +95,9 @@ func TestProvidersHandlerSavesEnvironmentReferenceWithoutSecret(t *testing.T) {
 	}
 	if cfg.Providers["remote"].APIKeyEnv != "REMOTE_API_KEY" {
 		t.Fatalf("provider=%+v", cfg.Providers["remote"])
+	}
+	if cfg.Providers["remote"].ResponsesBackend != "chat-completions" {
+		t.Fatalf("responses backend=%q", cfg.Providers["remote"].ResponsesBackend)
 	}
 }
 

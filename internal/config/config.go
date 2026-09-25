@@ -83,12 +83,13 @@ type PrivacyConfig struct {
 }
 
 type ProviderConfig struct {
-	Type         string   `toml:"type"`
-	BaseURL      string   `toml:"base_url"`
-	Model        string   `toml:"model"`
-	APIKey       string   `toml:"api_key"`
-	APIKeyEnv    string   `toml:"-"`
-	Capabilities []string `toml:"capabilities"`
+	Type             string   `toml:"type"`
+	ResponsesBackend string   `toml:"responses_backend"`
+	BaseURL          string   `toml:"base_url"`
+	Model            string   `toml:"model"`
+	APIKey           string   `toml:"api_key"`
+	APIKeyEnv        string   `toml:"-"`
+	Capabilities     []string `toml:"capabilities"`
 	// Local marks the provider as explicitly local (e.g. Ollama on 127.0.0.1).
 	// When true, SSRF validation is skipped. Only loopback base_url values are permitted.
 	Local bool `toml:"local"`

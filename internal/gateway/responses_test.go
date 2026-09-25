@@ -86,6 +86,65 @@ func TestResponsesStreamUsageAndUnsupportedState(t *testing.T) {
 	}
 }
 
+func TestResponsesChatBackendRoutesAndAccountsForUsage(t *testing.T) {
+	var calls atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Errorf("upstream path = %s", r.URL.Path)
+		}
+		var got struct {
+			Messages []struct{ Role, Content string } `json:"messages"`
+			Stream   bool                             `json:"stream"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil || len(got.Messages) != 1 || got.Messages[0].Content != "hello" || got.Stream {
+			t.Errorf("translated request = %+v, err = %v", got, err)
+		}
+		_, _ = io.WriteString(w, `{"id":"chatcmpl_1","model":"fixture-model","choices":[{"index":0,"message":{"role":"assistant","content":"world"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`)
+	}))
+	defer upstream.Close()
+	db, err := storage.Open(filepath.Join(t.TempDir(), "virgil.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	j, err := storage.NewJournal(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	cfg := config.Config{Providers: map[string]config.ProviderConfig{"nvidia": {Type: "openai-compatible", BaseURL: upstream.URL + "/v1", Model: "fixture-model", Local: true, ResponsesBackend: "chat-completions"}}}
+	h, err := NewServer(cfg, Dependencies{DB: db, Recorder: j, InstallationID: j.InstallationID()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"fixture-model","input":"hello"}`))
+	r.Header.Set("Authorization", "Bearer synthetic-key")
+	r.Header.Set("X-Virgil-Run-ID", "run_chat_bridge")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"world"`) {
+		t.Fatalf("response = %d %s", w.Code, w.Body.String())
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("upstream calls = %d", calls.Load())
+	}
+	var payload []byte
+	if err := db.QueryRow("SELECT payload FROM events WHERE status='success' LIMIT 1").Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	var event struct {
+		InputTokens  *int64 `json:"input_tokens"`
+		OutputTokens *int64 `json:"output_tokens"`
+	}
+	if err := json.Unmarshal(payload, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.InputTokens == nil || *event.InputTokens != 3 || event.OutputTokens == nil || *event.OutputTokens != 2 {
+		t.Fatalf("usage = %s", payload)
+	}
+}
+
 func TestResponsesCodexToolShapesAndMetadataRedaction(t *testing.T) {
 	const request = `{"model":"fixture-model","input":[{"role":"user","content":"hello"}],"stream":false,"client_metadata":{"session_id":"private-session"},"tools":[{"type":"function","name":"exec_command"},{"type":"namespace","name":"multi_agent_v1","tools":[{"name":"send_message"}]},{"type":"web_search"}]}`
 	input, names, err := parseResponsesRequest([]byte(request))
