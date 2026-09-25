@@ -20,8 +20,8 @@ type overviewData struct {
 }
 
 const overviewBody = `{{define "content"}}
-<div class="filter-bar"><span>Protection status for the last {{.Hours}} hours</span><a class="btn-sm" href="/dashboard?hours=24">24h</a><a class="btn-sm" href="/dashboard?hours=168">7d</a></div>
-<div class="cards">
+<div class="section-head"><div><h2>Execution safety</h2><p>Live supervision and circuit-break outcomes for the selected period.</p></div><div class="filter-bar"><span>Last {{.Hours}} hours</span><a class="btn-sm" href="/dashboard?hours=24">24h</a><a class="btn-sm" href="/dashboard?hours=168">7d</a></div></div>
+<div class="metric-grid operational-grid">
 <div class="card safe-card"><div class="card-label">Active executions</div><div class="card-value val-green">{{.ActiveExecutions}}</div><div class="card-sub">supervised now</div></div>
 <div class="card risk-card"><div class="card-label">Blocked executions</div><div class="card-value val-red">{{.BlockedExecutions}}</div><div class="card-sub">policy trips in period</div></div>
 <div class="card safe-card"><div class="card-label">Successful circuit breaks</div><div class="card-value val-green">{{.SuccessfulBreaks}}</div><div class="card-sub">process trees stopped</div></div>

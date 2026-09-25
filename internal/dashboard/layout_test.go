@@ -30,6 +30,20 @@ func TestRenderPageProvidesProductNavigationAndSecurityHeaders(t *testing.T) {
 	if !strings.Contains(body, `href="/dashboard" aria-current="page"`) {
 		t.Fatalf("overview navigation is not active: %s", body)
 	}
+	for _, want := range []string{
+		`<html lang="en" data-theme="golden-bough">`,
+		`class="skip-link" href="#main-content"`,
+		`class="brand-mark"`,
+		`class="nav-status"`,
+		`id="main-content"`,
+		`--accent:#c6a15b`,
+		`<h2>Execution safety</h2>`,
+		`class="metric-grid operational-grid"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("shared shell does not contain %q", want)
+		}
+	}
 	assertPanelSecurityHeaders(t, rec.Header())
 	_ = req
 }
