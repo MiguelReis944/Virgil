@@ -15,7 +15,11 @@ func runTail(args []string) error {
 	flags := flag.NewFlagSet("tail", flag.ContinueOnError)
 	n := flags.Int64("n", 20, "number of events to show")
 	format := flags.String("format", "text", "output format: text or json")
-	configPath := flags.String("config", "virgil.toml", "path to TOML configuration")
+	defaultPath, err := defaultConfigPath()
+	if err != nil {
+		return err
+	}
+	configPath := flags.String("config", defaultPath, "path to TOML configuration")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}

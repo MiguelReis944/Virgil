@@ -87,9 +87,13 @@ func run(args []string) error {
 		return nil
 	}
 	flags := flag.NewFlagSet("virgil", flag.ContinueOnError)
-	configPath := flags.String("config", "virgil.toml", "path to local TOML configuration")
-	envPath := flags.String("env-file", ".env", "path to .env file (ignored if missing)")
-	flags.StringVar(envPath, "env", ".env", "alias for --env-file")
+	defaultPath, err := defaultConfigPath()
+	if err != nil {
+		return err
+	}
+	configPath := flags.String("config", defaultPath, "path to local TOML configuration")
+	envPath := flags.String("env-file", "", "path to .env file (default: beside config; ignored if missing)")
+	flags.StringVar(envPath, "env", "", "alias for --env-file")
 	noOpen := flags.Bool("no-open", false, "start the local panel without opening a browser")
 	if err := flags.Parse(rest); err != nil {
 		return err

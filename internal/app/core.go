@@ -40,7 +40,7 @@ func RunCore(ctx context.Context, options CoreOptions) error {
 	}
 	envPath := options.EnvPath
 	if envPath == "" {
-		envPath = ".env"
+		envPath = filepath.Join(filepath.Dir(configPath), ".env")
 	}
 	loadDotEnv(envPath)
 	cfg, err := config.Load(configPath, os.Getenv)

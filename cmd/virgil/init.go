@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 const initTemplate = `# Virgil local gateway configuration
@@ -54,20 +55,27 @@ capabilities = ["stream", "tools"]
 
 func runInit(args []string) error {
 	flags := flag.NewFlagSet("init", flag.ContinueOnError)
-	output := flags.String("output", "virgil.toml", "output config file path")
+	defaultPath, err := defaultConfigPath()
+	if err != nil {
+		return err
+	}
+	output := flags.String("output", defaultPath, "output config file path")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if _, err := os.Stat(*output); err == nil {
 		return fmt.Errorf("%s already exists; delete it or use --output to choose a different path", *output)
 	}
+	if err := os.MkdirAll(filepath.Dir(*output), 0o700); err != nil {
+		return fmt.Errorf("create config directory: %w", err)
+	}
 	if err := os.WriteFile(*output, []byte(initTemplate), 0600); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 	fmt.Printf("Created %s\n", *output)
 	fmt.Println("Next steps:")
-	fmt.Println("  1. Edit virgil.toml — set your provider api_key (as an env var reference)")
-	fmt.Println("  2. export OPENAI_API_KEY=sk-...")
-	fmt.Println("  3. virgil serve --config virgil.toml")
+	fmt.Println("  1. Edit the new config — set a provider api_key environment reference")
+	fmt.Println("  2. Set that key in the Virgil installation's .env file")
+	fmt.Println("  3. Run virgil to open the local panel")
 	return nil
 }

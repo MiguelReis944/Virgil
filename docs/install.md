@@ -26,7 +26,7 @@ cd virgil
 ./virgil version
 ```
 
-Replace `vVERSION` and the platform in these examples with the artifact filename. Work in a folder where Virgil can create `virgil.toml`, `.env`, and `data/`. Keep this folder private to your OS user.
+Replace `vVERSION` and the platform in these examples with the artifact filename. Work in a folder where Virgil can create `virgil.toml`, `.env`, and `data/`. Keep this folder private to your OS user. Set `VIRGIL_HOME` to that folder's absolute path when you want to launch the same Virgil installation from [any project or harness](integrations/any-project.md).
 
 ## First start
 

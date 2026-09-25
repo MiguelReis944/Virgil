@@ -23,3 +23,19 @@ func TestInitProducesRunnableProviderConfig(t *testing.T) {
 		t.Fatalf("generated provider config is not runnable: %v", err)
 	}
 }
+
+func TestInitUsesVirgilHomeOutsideProject(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "installation")
+	project := t.TempDir()
+	t.Setenv("VIRGIL_HOME", home)
+	t.Chdir(project)
+	if err := runInit(nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "virgil.toml")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(project, "virgil.toml")); !os.IsNotExist(err) {
+		t.Fatalf("project config polluted: %v", err)
+	}
+}

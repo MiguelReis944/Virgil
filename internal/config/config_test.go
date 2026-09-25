@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -24,11 +25,41 @@ func TestLoadDefaultsAndLocalMode(t *testing.T) {
 	if cfg.Server.Listen != "127.0.0.1:8787" {
 		t.Fatalf("listen = %q", cfg.Server.Listen)
 	}
-	if cfg.Storage.Path != "./data/virgil.db" {
+	if cfg.Storage.Path != filepath.Join(filepath.Dir(path), "data", "virgil.db") {
 		t.Fatalf("storage path = %q", cfg.Storage.Path)
 	}
 	if cfg.ControlPlane.Enabled {
 		t.Fatal("Control Plane enabled by default")
+	}
+}
+
+func TestLoadResolvesPathsBesideConfigFromOtherWorkingDirectory(t *testing.T) {
+	configPath := writeConfig(t, "[storage]\npath = \"./data/virgil.db\"\n[control_plane]\nenabled = true\nendpoint = \"https://example.com\"\ncredential_path = \"./secrets/control.token\"\nallowed_fields = [\"event_id\"]\n")
+	t.Chdir(t.TempDir())
+	cfg, err := Load(configPath, os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Dir(configPath)
+	if want := filepath.Join(base, "data", "virgil.db"); cfg.Storage.Path != want {
+		t.Fatalf("storage path = %q, want %q", cfg.Storage.Path, want)
+	}
+	if want := filepath.Join(base, "secrets", "control.token"); cfg.ControlPlane.CredentialPath != want {
+		t.Fatalf("credential path = %q, want %q", cfg.ControlPlane.CredentialPath, want)
+	}
+}
+
+func TestLoadPreservesAbsolutePaths(t *testing.T) {
+	base := t.TempDir()
+	storagePath := filepath.Join(base, "absolute.db")
+	credentialPath := filepath.Join(base, "absolute.token")
+	configPath := writeConfig(t, "[storage]\npath = "+fmt.Sprintf("%q", filepath.ToSlash(storagePath))+"\n[control_plane]\nenabled = true\nendpoint = \"https://example.com\"\ncredential_path = "+fmt.Sprintf("%q", filepath.ToSlash(credentialPath))+"\nallowed_fields = [\"event_id\"]\n")
+	cfg, err := Load(configPath, os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Storage.Path != filepath.ToSlash(storagePath) || cfg.ControlPlane.CredentialPath != filepath.ToSlash(credentialPath) {
+		t.Fatalf("absolute paths changed: storage=%q credential=%q", cfg.Storage.Path, cfg.ControlPlane.CredentialPath)
 	}
 }
 

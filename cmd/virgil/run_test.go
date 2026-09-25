@@ -25,6 +25,12 @@ func TestRunChildEnvHelper(t *testing.T) {
 	if got := os.Getenv("OPENAI_BASE_URL"); strings.Contains(got, "//v1") || !strings.HasSuffix(got, "/v1") {
 		os.Exit(5)
 	}
+	if expected := os.Getenv("VIRGIL_TEST_WORKDIR"); expected != "" {
+		cwd, err := os.Getwd()
+		if err != nil || cwd != expected {
+			os.Exit(6)
+		}
+	}
 	if err := os.WriteFile(os.Getenv("VIRGIL_TEST_OUTPUT"), []byte("ready"), 0600); err != nil {
 		os.Exit(4)
 	}
@@ -69,18 +75,24 @@ func TestRunCommandUsesConfiguredCoreAndRunToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(dir, "virgil.toml")
-	if err := os.WriteFile(configPath, []byte("[server]\nlisten = \"127.0.0.1:8787\"\n[storage]\npath = \""+filepath.ToSlash(filepath.Join(dir, "virgil.db"))+"\"\n[providers.synthetic]\ntype = \"openai-compatible\"\napi_key = \"${CUSTOM_AUTH_VAR}\"\n"), 0600); err != nil {
+	if err := os.WriteFile(configPath, []byte("[server]\nlisten = \"127.0.0.1:8787\"\n[storage]\npath = \"./virgil.db\"\n[providers.synthetic]\ntype = \"openai-compatible\"\napi_key = \"${CUSTOM_AUTH_VAR}\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	project := t.TempDir()
+	t.Setenv("VIRGIL_HOME", dir)
+	t.Chdir(project)
 	output := filepath.Join(dir, "child.txt")
 	t.Setenv("PROVIDER_API_KEY", "provider-secret")
 	t.Setenv("CUSTOM_AUTH_VAR", "configured-provider-secret")
-	err := runRun([]string{"--config", configPath, "--address", server.URL + "/", "--run-id", "run_cli", "--env", "VIRGIL_TEST_CHILD=1,VIRGIL_TEST_OUTPUT=" + output + ",CUSTOM_KEY=explicit-secret", "--", os.Args[0], "-test.run=^TestRunChildEnvHelper$"})
+	err := runRun([]string{"--address", server.URL + "/", "--run-id", "run_cli", "--env", "VIRGIL_TEST_CHILD=1,VIRGIL_TEST_OUTPUT=" + output + ",VIRGIL_TEST_WORKDIR=" + project + ",CUSTOM_KEY=explicit-secret", "--", os.Args[0], "-test.run=^TestRunChildEnvHelper$"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if data, err := os.ReadFile(output); err != nil || string(data) != "ready" {
 		t.Fatalf("child output=%q err=%v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(project, "data")); !os.IsNotExist(err) {
+		t.Fatalf("Virgil state leaked into project directory: %v", err)
 	}
 }
 

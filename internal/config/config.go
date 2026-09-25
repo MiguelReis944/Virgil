@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 
 	"github.com/MiguelReis944/Virgil/internal/redaction"
@@ -127,6 +128,16 @@ func Load(path string, _ func(string) string) (Config, error) {
 	}
 	if cfg.Storage.Path == "" {
 		return Config{}, fmt.Errorf("storage path is required")
+	}
+	configDir, err := filepath.Abs(filepath.Dir(path))
+	if err != nil {
+		return Config{}, fmt.Errorf("resolve config directory: %w", err)
+	}
+	if !filepath.IsAbs(cfg.Storage.Path) {
+		cfg.Storage.Path = filepath.Join(configDir, cfg.Storage.Path)
+	}
+	if cfg.ControlPlane.CredentialPath != "" && !filepath.IsAbs(cfg.ControlPlane.CredentialPath) {
+		cfg.ControlPlane.CredentialPath = filepath.Join(configDir, cfg.ControlPlane.CredentialPath)
 	}
 	if cfg.Storage.RetentionDays < 0 {
 		return Config{}, fmt.Errorf("retention_days cannot be negative")

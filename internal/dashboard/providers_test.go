@@ -20,7 +20,7 @@ func TestProvidersHandlerRendersSafeIntegrationValues(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dashboard/providers?onboarding=1", nil))
 	body := rec.Body.String()
-	for _, want := range []string{"Providers", "http://127.0.0.1:11434/v1", "qwen", "OPENAI_BASE_URL", "VIRGIL_RUN_TOKEN", "Add your first provider", "Codex CLI pilot", "Codex desktop", "Claude Code", "OmniRoute upstream", "wire_api=\"responses\"", "Virgil cannot stop the app process"} {
+	for _, want := range []string{"Providers", "http://127.0.0.1:11434/v1", "qwen", "OPENAI_BASE_URL", "VIRGIL_RUN_TOKEN", "VIRGIL_HOME", "Add your first provider", "Codex CLI pilot", "Codex desktop", "Claude Code", "OmniRoute upstream", "wire_api=\"responses\"", "Virgil cannot stop the app process"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
 		}

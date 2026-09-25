@@ -21,7 +21,11 @@ import (
 // under gateway supervision. The gateway must already be running.
 func runRun(args []string) error {
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
-	configPath := flags.String("config", "virgil.toml", "path to local TOML configuration")
+	defaultPath, err := defaultConfigPath()
+	if err != nil {
+		return err
+	}
+	configPath := flags.String("config", defaultPath, "path to local TOML configuration")
 	address := flags.String("address", "", "loopback core address (defaults to server.listen)")
 	runID := flags.String("run-id", "", "run correlation ID (generated if empty)")
 	deadline := flags.Duration("deadline", 0, "wall-clock limit for the child process (e.g. 30m); 0 means none")

@@ -162,6 +162,32 @@ func TestCoreOptionsRunCoreRejectsOccupiedListener(t *testing.T) {
 	}
 }
 
+func TestRunCoreLoadsDefaultEnvBesideConfig(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	configDir := t.TempDir()
+	configPath := filepath.Join(configDir, "virgil.toml")
+	configText := fmt.Sprintf("[server]\nlisten = %q\n", listener.Addr().String())
+	if err := os.WriteFile(configPath, []byte(configText), 0600); err != nil {
+		t.Fatal(err)
+	}
+	const key = "VIRGIL_TEST_ENV_BESIDE_CONFIG"
+	t.Setenv(key, "")
+	if err := os.WriteFile(filepath.Join(configDir, ".env"), []byte(key+"=from-config-directory\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir())
+	if err := RunCore(context.Background(), CoreOptions{ConfigPath: configPath}); err == nil || !strings.Contains(err.Error(), "listen") {
+		t.Fatalf("RunCore error = %v, want occupied listener", err)
+	}
+	if got := os.Getenv(key); got != "from-config-directory" {
+		t.Fatalf("env value = %q, want config directory .env", got)
+	}
+}
+
 func TestRunCoreRejectsMalformedConfigInsteadOfStartingSetup(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "virgil.toml")
 	if err := os.WriteFile(configPath, []byte("[server\n"), 0600); err != nil {
