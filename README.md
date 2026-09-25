@@ -2,13 +2,15 @@
 
 Virgil is a local circuit breaker for supervised AI agents. One executable runs the core, gateway, and browser panel on the same machine. A policy block is recorded and terminates the supervised process tree. The panel is available at `/dashboard` on the loopback address.
 
+**Status: local developer beta.** Use it on one machine with an agent whose OpenAI-compatible requests can be routed through Virgil. The supervised circuit breaker has automated end-to-end coverage; external user pilots and the [release acceptance checklist](docs/release-acceptance.md) are still required before calling it a finished product. Start with the [local beta pilot guide](docs/pilots/local-beta.md).
+
 ## Current functionality
 
 The gateway supports configured OpenAI-compatible requests, provider adapters, local policy checks, SQLite event and execution history, and JSONL export. The core binds to the configured local address. Setup is served locally when the configuration is missing.
 
 `virgil` starts the local core and opens the browser panel; `virgil serve` remains an alias. `virgil run` starts a child under core supervision, supplies the gateway address and run credential, and terminates its process tree on a policy block, deadline, or interruption. `virgil version` displays the binary's version, commit, and build date.
 
-The panel includes Providers, Protections, Executions, Health, Settings, and Usage. Start with Providers and Protections, then launch a supervised child and inspect its result under Executions.
+The panel includes Providers, Protections, Executions, Health, Settings, and Usage. Start with Providers and Protections, then launch a supervised child and inspect its result under Executions. See [the runner guide](docs/runner.md) for the current command and supervision behavior.
 
 This local product does not require an account or hosted Control Plane. It currently binds to loopback; secure LAN operation is a separate future stage. Historical team-service concepts are retained later in this README as deferred design context.
 
