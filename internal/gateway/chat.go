@@ -25,10 +25,12 @@ import (
 const maxChatRequest = 1 << 20
 
 type route struct {
-	adapter  providers.Adapter
-	keyEnv   string
-	provider string
-	validate func(json.RawMessage) error
+	adapter      providers.Adapter
+	keyEnv       string
+	provider     string
+	validate     func(json.RawMessage) error
+	baseURL      string
+	providerType string
 }
 
 type router struct {
@@ -81,29 +83,32 @@ func newRouter(cfg config.Config, client *http.Client, getenv func(string) strin
 	}
 	for model, registration := range registry {
 		r.models[model] = route{
-			adapter:  registration.Adapter,
-			keyEnv:   registration.KeyEnv,
-			provider: registration.Provider,
-			validate: registration.Validate,
+			adapter:      registration.Adapter,
+			keyEnv:       registration.KeyEnv,
+			provider:     registration.Provider,
+			validate:     registration.Validate,
+			baseURL:      cfg.Providers[registration.Provider].BaseURL,
+			providerType: cfg.Providers[registration.Provider].Type,
 		}
 	}
 	return r, nil
 }
 
 var errorMessages = map[string]string{
-	"request_too_large":        "Request body exceeds the 1 MiB limit.",
-	"request_timeout":          "The upstream read timed out.",
-	"invalid_request":          "Request body is not valid JSON or is missing required fields.",
-	"model_not_configured":     "The requested model is not configured in this gateway. Check the 'model' field or run 'virgil init' to generate a config.",
-	"unsupported_request":      "The request uses capabilities not supported by this model (e.g. streaming or tools). Check the provider capabilities.",
-	"provider_key_required":    "No API key could be resolved for this provider. Set the env var referenced in the provider's api_key config field.",
-	"invalid_execution_token":  "Execution token is missing or invalid.",
-	"invalid_provider_config":  "Provider config is invalid. Check the provider base_url and type in virgil.toml.",
-	"trace_unavailable":        "Failed to generate a trace ID.",
-	"run_id_unavailable":       "Failed to resolve or generate a run ID.",
-	"policy_unavailable":       "Policy engine is unavailable. The gateway may still be starting.",
-	"provider_transport_error": "Could not reach the upstream provider. Check network connectivity and the provider base_url.",
-	"provider_response_error":  "The upstream provider returned an unexpected response format.",
+	"request_too_large":           "Request body exceeds the 1 MiB limit.",
+	"responses_request_too_large": "Responses request body exceeds the 8 MiB limit.",
+	"request_timeout":             "The upstream read timed out.",
+	"invalid_request":             "Request body is not valid JSON or is missing required fields.",
+	"model_not_configured":        "The requested model is not configured in this gateway. Check the 'model' field or run 'virgil init' to generate a config.",
+	"unsupported_request":         "The request uses capabilities not supported by this model (e.g. streaming or tools). Check the provider capabilities.",
+	"provider_key_required":       "No API key could be resolved for this provider. Set the env var referenced in the provider's api_key config field.",
+	"invalid_execution_token":     "Execution token is missing or invalid.",
+	"invalid_provider_config":     "Provider config is invalid. Check the provider base_url and type in virgil.toml.",
+	"trace_unavailable":           "Failed to generate a trace ID.",
+	"run_id_unavailable":          "Failed to resolve or generate a run ID.",
+	"policy_unavailable":          "Policy engine is unavailable. The gateway may still be starting.",
+	"provider_transport_error":    "Could not reach the upstream provider. Check network connectivity and the provider base_url.",
+	"provider_response_error":     "The upstream provider returned an unexpected response format.",
 }
 
 func writeAPIError(w http.ResponseWriter, status int, code string) {

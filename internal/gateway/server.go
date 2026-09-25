@@ -96,6 +96,7 @@ func NewServer(cfg config.Config, deps Dependencies) (http.Handler, error) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", router.authenticateExecution(router.chat, "Authorization"))
+	mux.HandleFunc("POST /v1/responses", router.authenticateExecution(router.responses, "Authorization"))
 	mux.HandleFunc("POST /v1/tool-results", router.authenticateExecution(router.toolResults, "X-Virgil-App-Token"))
 	mux.HandleFunc("GET /v1/models", router.listModels)
 	if deps.Control != nil {

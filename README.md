@@ -10,7 +10,7 @@ The gateway supports configured OpenAI-compatible requests, provider adapters, l
 
 `virgil` starts the local core and opens the browser panel; `virgil serve` remains an alias. `virgil run` starts a child under core supervision, supplies the gateway address and run credential, and terminates its process tree on a policy block, deadline, or interruption. `virgil version` displays the binary's version, commit, and build date.
 
-The panel includes Providers, Protections, Executions, Health, Settings, and Usage. Start with Providers and Protections, then launch a supervised child and inspect its result under Executions. See [the runner guide](docs/runner.md) for the current command and supervision behavior.
+The panel includes Providers, Protections, Executions, Health, Settings, and Usage. Start with Providers and Protections, then launch a supervised child and inspect its result under Executions. See [the runner guide](docs/runner.md) for the current command and supervision behavior. For Codex CLI, use the [local Responses pilot](docs/integrations/codex.md).
 
 This local product does not require an account or hosted Control Plane. It currently binds to loopback; secure LAN operation is a separate future stage. Historical team-service concepts are retained later in this README as deferred design context.
 
