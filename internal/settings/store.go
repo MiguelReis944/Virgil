@@ -18,11 +18,19 @@ import (
 
 type Store struct {
 	path    string
+	envPath string
 	mu      sync.Mutex
 	replace func(string, string) error
 }
 
-func New(path string) *Store { return &Store{path: path, replace: atomicReplace} }
+func New(path string) *Store { return NewWithEnv(path, "") }
+
+func NewWithEnv(path, envPath string) *Store {
+	if envPath == "" {
+		envPath = filepath.Join(filepath.Dir(path), ".env")
+	}
+	return &Store{path: path, envPath: envPath, replace: atomicReplace}
+}
 
 func (s *Store) Path() string { return s.path }
 

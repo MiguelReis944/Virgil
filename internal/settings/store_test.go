@@ -12,6 +12,49 @@ import (
 	"github.com/MiguelReis944/Virgil/internal/config"
 )
 
+func TestStoreSavesProviderCredentialWithoutChangingConfig(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "virgil.toml")
+	envPath := filepath.Join(dir, "custom.env")
+	if err := os.WriteFile(configPath, []byte("[server]\nlisten='127.0.0.1:8787'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(envPath, []byte("OTHER=value\nVIRGIL_TEST_KEY=old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := NewWithEnv(configPath, envPath)
+	if err := store.SaveCredential(context.Background(), "VIRGIL_TEST_KEY", "nvapi-new=value#part"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(raw), "VIRGIL_TEST_KEY=") != 1 || !strings.Contains(string(raw), "OTHER=value") || !strings.Contains(string(raw), "VIRGIL_TEST_KEY=nvapi-new=value#part") {
+		t.Fatalf("unexpected env contents: %s", raw)
+	}
+	if !store.HasCredential("VIRGIL_TEST_KEY") {
+		t.Fatal("saved credential not detected")
+	}
+	cfg, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(cfg), "nvapi-new") {
+		t.Fatal("credential leaked into config")
+	}
+}
+
+func TestStoreRejectsMultilineCredential(t *testing.T) {
+	store := NewWithEnv(filepath.Join(t.TempDir(), "virgil.toml"), filepath.Join(t.TempDir(), ".env"))
+	if err := store.SaveCredential(context.Background(), "VIRGIL_TEST_KEY", "first\nSECOND=evil"); err == nil {
+		t.Fatal("multiline credential accepted")
+	}
+	if store.HasCredential("VIRGIL_TEST_KEY") {
+		t.Fatal("invalid credential saved")
+	}
+}
+
 func TestStoreUpdateIsAtomicValidatedAndPreservesConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "virgil.toml")
 	original := "[server]\nlisten='127.0.0.1:8787'\nlog_level='info'\n[storage]\npath='./data/test.db'\nretention_days=7\n[privacy]\ncapture_prompts=true\n"

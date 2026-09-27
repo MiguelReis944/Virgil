@@ -20,7 +20,7 @@ func TestProvidersHandlerRendersSafeIntegrationValues(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dashboard/providers?onboarding=1", nil))
 	body := rec.Body.String()
-	for _, want := range []string{"Providers", "http://127.0.0.1:11434/v1", "qwen", "OPENAI_BASE_URL", "VIRGIL_RUN_TOKEN", "VIRGIL_HOME", "Add your first provider", "Codex CLI pilot", "Codex desktop", "Claude Code", "OmniRoute upstream", "wire_api=\"responses\"", "Virgil cannot stop the app process"} {
+	for _, want := range []string{"Providers", "http://127.0.0.1:11434/v1", "qwen", "OPENAI_BASE_URL", "VIRGIL_RUN_TOKEN", "VIRGIL_HOME", "Connect a model", "API key", "Codex CLI pilot", "Codex desktop", "Claude Code", "OmniRoute upstream", "wire_api=\"responses\"", "Virgil cannot stop the app process"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
 		}
@@ -101,6 +101,45 @@ func TestProvidersHandlerSavesEnvironmentReferenceWithoutSecret(t *testing.T) {
 	}
 }
 
+func TestProvidersHandlerSavesNVIDIACredentialFromPanel(t *testing.T) {
+	store := testSettingsStore(t)
+	h := ProvidersHandler(store, "")
+	get := httptest.NewRecorder()
+	h.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/dashboard/providers", nil))
+	form := url.Values{
+		"csrf_token":       {extractCSRF(t, get.Body.String())},
+		"provider_name":    {"nvidia"},
+		"provider_preset":  {"nvidia"},
+		"provider_model":   {"meta/muse-glimmer-30b"},
+		"provider_api_key": {"nvapi-panel-secret"},
+	}
+	rec := postForm(h, "/dashboard/providers", form, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "nvapi-panel-secret") {
+		t.Fatal("credential echoed in response")
+	}
+	cfg, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := cfg.Providers["nvidia"]
+	if p.Type != "openai-compatible" || p.BaseURL != "https://integrate.api.nvidia.com/v1" || p.ResponsesBackend != "chat-completions" || p.APIKeyEnv == "" {
+		t.Fatalf("provider=%+v", p)
+	}
+	if !store.HasCredential(p.APIKeyEnv) {
+		t.Fatal("credential was not saved")
+	}
+	raw, err := os.ReadFile(store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "nvapi-panel-secret") {
+		t.Fatal("credential leaked into TOML")
+	}
+}
+
 func TestProvidersHandlerPreservesCapabilitiesForEditedProvider(t *testing.T) {
 	store := testSettingsStore(t)
 	if err := store.Update(context.Background(), func(cfg *config.Config) error {
@@ -158,6 +197,33 @@ func TestProvidersCSRFIsBoundToAuthenticatedSession(t *testing.T) {
 	}
 	if rec := postForm(h, "/dashboard/providers", form, cookieA); rec.Code != http.StatusOK {
 		t.Fatalf("same-session status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestParseProvidersRejectsDuplicateNames(t *testing.T) {
+	form := url.Values{
+		"provider_name":    {"same", "same"},
+		"provider_preset":  {"nvidia", "nvidia"},
+		"provider_model":   {"meta/muse-glimmer-30b", "meta/muse-glimmer-30b"},
+		"provider_api_key": {"one", "two"},
+	}
+	if _, err := parseProviders(form, nil); err == nil {
+		t.Fatal("expected duplicate provider names to be rejected")
+	}
+}
+
+func TestParseProvidersAppliesNVIDIADefaultWithoutBrowserScript(t *testing.T) {
+	form := url.Values{
+		"provider_name":    {"nvidia"},
+		"provider_preset":  {"nvidia"},
+		"provider_api_key": {"test-key"},
+	}
+	got, err := parseProviders(form, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["nvidia"].Model != "meta/muse-glimmer-30b" || got["nvidia"].ResponsesBackend != "chat-completions" {
+		t.Fatalf("NVIDIA preset not applied: %+v", got["nvidia"])
 	}
 }
 

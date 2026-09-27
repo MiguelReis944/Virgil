@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -317,6 +318,70 @@ func TestCoreOptionsServesPanelUntilCancelled(t *testing.T) {
 		}
 	case <-time.After(7 * time.Second):
 		t.Fatal("core did not stop after cancellation")
+	}
+}
+
+func TestCoreProviderFormUsesConfiguredEnvFile(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	listener.Close()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "virgil.toml")
+	envPath := filepath.Join(dir, "secrets", "providers.env")
+	configText := fmt.Sprintf("[server]\nlisten=%q\n[storage]\npath=%q\n", address, filepath.ToSlash(filepath.Join(dir, "virgil.db")))
+	if err := os.WriteFile(configPath, []byte(configText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- RunCore(ctx, CoreOptions{ConfigPath: configPath, EnvPath: envPath, OpenPanel: false}) }()
+	client := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{Proxy: nil}}
+	defer client.CloseIdleConnections()
+	var page []byte
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		resp, err := client.Get("http://" + address + "/dashboard/providers")
+		if err == nil {
+			page, _ = io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	_, after, found := strings.Cut(string(page), `name="csrf_token" value="`)
+	if !found {
+		t.Fatal("provider page did not become ready")
+	}
+	token, _, _ := strings.Cut(after, `"`)
+	form := url.Values{"csrf_token": {token}, "provider_name": {"nvidia"}, "provider_preset": {"nvidia"}, "provider_model": {"meta/muse-glimmer-30b"}, "provider_api_key": {"nvapi-app-test"}}
+	resp, err := client.PostForm("http://"+address+"/dashboard/providers", form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("provider save status=%d", resp.StatusCode)
+	}
+	raw, err := os.ReadFile(envPath)
+	if err != nil || !strings.Contains(string(raw), "nvapi-app-test") {
+		t.Fatalf("custom env file not used: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".env")); !os.IsNotExist(err) {
+		t.Fatal("default env file was written")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("core did not stop")
 	}
 }
 

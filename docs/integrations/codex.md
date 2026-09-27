@@ -4,7 +4,7 @@ This pilot sends Codex model requests through Virgil's `/v1/responses` gateway. 
 
 ## Set up
 
-1. In **Providers**, add a provider. For NVIDIA hosted inference, use type `openai-compatible`, base URL `https://integrate.api.nvidia.com/v1`, model `meta/muse-glimmer-30b`, credential environment name `NVIDIA_API_KEY`, and **Responses → Translate Chat**. Set the credential in Virgil's ignored `.env`, save, and restart the core. For an OpenAI Responses provider, keep **Responses → Native**.
+1. In **Providers**, choose a service, enter its model ID, and paste its API key in the panel. For NVIDIA, the preset fills `meta/muse-glimmer-30b` and selects **Translate Chat**. Save and restart Virgil. For an OpenAI Responses provider, the preset uses **Native Responses**.
 2. Set a small call or cost limit in **Protections** and restart the core again. For a hard cost cap, also set `estimated_cost_per_call_usd` in the local configuration until model pricing is configured.
 3. From the project directory, start Codex as a child of Virgil. Use the model ID configured in **Providers** and the loopback address shown there. In PowerShell:
 

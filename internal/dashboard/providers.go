@@ -51,9 +51,38 @@ func (g *csrfGuard) valid(r *http.Request, candidate string) bool {
 }
 
 type providerView struct {
-	Name, Type, BaseURL, Model, APIKeyEnv, Location, ResponsesBackend string
-	CredentialConfigured                                              bool
+	Name, Type, BaseURL, Model, APIKeyEnv, Location, ResponsesBackend, Preset string
+	CredentialConfigured, NoKeyRequired                                       bool
 }
+
+type providerPreset struct {
+	Type, BaseURL, ResponsesBackend, Model string
+	Local                                  bool
+}
+
+var providerPresets = map[string]providerPreset{
+	"nvidia":    {Type: "openai-compatible", BaseURL: "https://integrate.api.nvidia.com/v1", ResponsesBackend: "chat-completions", Model: "meta/muse-glimmer-30b"},
+	"openai":    {Type: "openai", BaseURL: "https://api.openai.com/v1"},
+	"anthropic": {Type: "anthropic", BaseURL: "https://api.anthropic.com/v1"},
+	"kimi":      {Type: "kimi", BaseURL: "https://api.moonshot.ai/v1"},
+	"ollama":    {Type: "ollama", BaseURL: "http://127.0.0.1:11434/v1", Local: true},
+}
+
+func presetForProvider(p config.ProviderConfig) string {
+	for name, preset := range providerPresets {
+		if p.Type == preset.Type && p.BaseURL == preset.BaseURL && p.ResponsesBackend == preset.ResponsesBackend && p.Local == preset.Local {
+			return name
+		}
+	}
+	return "custom"
+}
+
+func credentialEnvName(name string) string {
+	sum := sha256.Sum256([]byte(name))
+	clean := strings.ToUpper(strings.NewReplacer("-", "_", ".", "_").Replace(name))
+	return "VIRGIL_PROVIDER_" + clean + "_" + hex.EncodeToString(sum[:4]) + "_API_KEY"
+}
+
 type providersPage struct {
 	Providers   []providerView
 	CSRF, Error string
@@ -61,15 +90,6 @@ type providersPage struct {
 	GatewayURL  string
 	GatewayRoot string
 }
-
-const providersBody = `{{define "content"}}{{if .Onboarding}}<div class="flash">Add your first provider to route supervised AI requests through Virgil.</div>{{end}}{{if .Error}}<div class="form-err">{{.Error}}</div>{{end}}
-<div class="card"><div class="card-label">Use Virgil in any project</div><p>Keep one Virgil installation outside your projects. Set <code>VIRGIL_HOME</code> to its absolute directory in the environment that starts Virgil and the agent. Open a terminal at any project root and run Codex or Claude Code there. Virgil keeps <code>virgil.toml</code>, <code>.env</code>, database, and control token in its installation; the agent keeps the project as its working directory. Desktop settings are user-level and apply across local projects.</p></div>
-<div class="card"><div class="card-label">Run a protected agent</div><p>1. Save a provider here and set its credential environment variable for the Virgil process, if required. 2. Set a limit in <a href="/dashboard/protections">Protections</a>. 3. Restart Virgil, then launch your agent with <code>virgil run -- &lt;command&gt;</code>. The result appears under <a href="/dashboard/executions">Executions</a>.</p><p>For an OpenAI-compatible client, use <code>OPENAI_BASE_URL={{.GatewayURL}}</code>, <code>OPENAI_API_KEY=$VIRGIL_RUN_TOKEN</code>, and the model ID shown below. <code>virgil run</code> supplies these environment variables to the child. Only requests sent through Virgil are protected.</p></div>
-<div class="card"><div class="card-label">Codex CLI pilot</div><p>Codex uses the Responses API. For a provider that offers only Chat Completions, choose <strong>Translate Chat</strong> in the Responses column. Save, restart Virgil, then launch Codex from a project directory. Replace <code>YOUR_MODEL_ID</code> with the model ID shown above. Keep web search disabled when using Translate Chat.</p><pre><code>virgil run -- codex -c 'model_provider="virgil"' -c 'model_providers.virgil.name="Virgil"' -c 'model_providers.virgil.base_url="{{.GatewayURL}}"' -c 'model_providers.virgil.env_key="VIRGIL_RUN_TOKEN"' -c 'model_providers.virgil.wire_api="responses"' -c 'model_providers.virgil.requires_openai_auth=false' -c 'web_search="disabled"' -m 'YOUR_MODEL_ID'</code></pre><p>Inspect the run in <a href="/dashboard/executions">Executions</a> and costs in <a href="/dashboard/usage">Usage</a>.</p></div>
-<div class="card"><div class="card-label">Codex desktop</div><p>Set a separate random <code>VIRGIL_DESKTOP_TOKEN</code> (at least 32 characters) in Virgil's ignored <code>.env</code> and restart the core. Configure a custom Responses provider in your user-level <code>~/.codex/config.toml</code> with <code>base_url = "{{.GatewayURL}}"</code>, <code>env_key = "VIRGIL_DESKTOP_TOKEN"</code>, <code>wire_api = "responses"</code>, and your model ID. Put the same token in <code>~/.codex/.env</code> if the app does not inherit shell variables. Restart the app and verify a new local task in <a href="/dashboard/usage">Usage</a>. Desktop calls can be blocked; Virgil cannot stop the app process.</p></div>
-<div class="card"><div class="card-label">Claude Code</div><p>Configure an <code>anthropic</code> provider above. The supervised CLI command is <code>virgil run -- claude</code>; Virgil supplies <code>ANTHROPIC_BASE_URL</code> and <code>ANTHROPIC_AUTH_TOKEN</code>. For Claude desktop, enable Developer Mode and use <strong>Developer → Configure Third-Party Inference</strong> with root URL <code>{{.GatewayRoot}}</code> and the separate desktop token. Check <a href="/dashboard/usage">Usage</a> for desktop requests. An Anthropic API key or another compatible upstream credential is required; a claude.ai subscription is not forwarded by Virgil.</p></div>
-<div class="card"><div class="card-label">OmniRoute upstream</div><p>To route through OmniRoute after Virgil, use <code>http://127.0.0.1:20128/v1</code> as an <code>openai-compatible</code> Responses provider or an <code>anthropic</code> Messages provider, with <code>OMNIROUTE_API_KEY</code> set only for the Virgil core. Verify the chosen model works on OmniRoute's HTTP endpoint. Its separate Codex OAuth WebSocket bridge is not handled by Virgil.</p></div>
-<form method="post" action="/dashboard/providers"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><div class="table-wrap"><table><thead><tr><th>Name</th><th>Type</th><th>Model ID</th><th>Base URL</th><th>Location</th><th>Credential env name</th><th>Responses</th></tr></thead><tbody>{{range .Providers}}<tr><td><input name="provider_name" value="{{.Name}}"></td><td><input name="provider_type" value="{{.Type}}"></td><td><input name="provider_model" value="{{.Model}}"></td><td><input name="provider_base_url" value="{{.BaseURL}}"></td><td>{{.Location}}<input type="hidden" name="provider_local" value="{{if eq .Location "Local"}}true{{else}}false{{end}}"></td><td><input name="provider_api_key_env" value="{{.APIKeyEnv}}" placeholder="OPENAI_API_KEY">{{if .CredentialConfigured}}<span class="badge badge-success">configured</span>{{end}}</td><td><select name="provider_responses_backend"><option value="" {{if eq .ResponsesBackend ""}}selected{{end}}>Native</option><option value="chat-completions" {{if eq .ResponsesBackend "chat-completions"}}selected{{end}}>Translate Chat</option></select></td></tr>{{else}}<tr><td colspan="7">No providers configured.</td></tr>{{end}}<tr><td><input name="provider_name"></td><td><input name="provider_type" value="openai-compatible"></td><td><input name="provider_model"></td><td><input name="provider_base_url"></td><td><select name="provider_local"><option value="false">Remote</option><option value="true">Local</option></select></td><td><input name="provider_api_key_env" placeholder="OPENAI_API_KEY"></td><td><select name="provider_responses_backend"><option value="">Native</option><option value="chat-completions">Translate Chat</option></select></td></tr></tbody></table></div><button class="btn-primary" type="submit">Save providers</button></form>{{end}}`
 
 func ProvidersHandler(store *settings.Store, password string) http.Handler {
 	csrf := newCSRFGuard()
@@ -82,6 +102,7 @@ func ProvidersHandler(store *settings.Store, password string) http.Handler {
 			return
 		}
 		if r.Method == http.MethodPost {
+			w.Header().Set("Cache-Control", "no-store")
 			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 			if err := r.ParseForm(); err != nil {
 				http.Error(w, "bad form", http.StatusBadRequest)
@@ -93,10 +114,29 @@ func ProvidersHandler(store *settings.Store, password string) http.Handler {
 			}
 			providers, err := parseProviders(r.Form, current.Providers)
 			if err == nil {
-				err = store.Update(r.Context(), func(cfg *config.Config) error { cfg.Providers = providers; return nil })
+				for i, rawName := range r.Form["provider_name"] {
+					name := strings.TrimSpace(rawName)
+					if name == "" || i >= len(r.Form["provider_api_key"]) || r.Form["provider_api_key"][i] == "" {
+						continue
+					}
+					provider, exists := providers[name]
+					if !exists {
+						continue
+					}
+					err = store.SaveCredential(r.Context(), provider.APIKeyEnv, r.Form["provider_api_key"][i])
+					if err != nil {
+						page.Error = "Could not save the API key. Remove spaces around it and line breaks."
+						break
+					}
+				}
+				if err == nil {
+					err = store.Update(r.Context(), func(cfg *config.Config) error { cfg.Providers = providers; return nil })
+				}
 				if err != nil {
 					slog.Error("save provider settings failed", "error", err)
-					page.Error = "Could not save configuration. Check the Virgil logs."
+					if page.Error == "" {
+						page.Error = "Could not save the provider. Check the Virgil logs."
+					}
 				}
 			}
 			if err != nil {
@@ -119,6 +159,7 @@ func ProvidersHandler(store *settings.Store, password string) http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		w.Header().Set("Cache-Control", "no-store")
 		renderProviders(w, password, page, store)
 	}))
 }
@@ -146,7 +187,7 @@ func renderProvidersWithFlash(w http.ResponseWriter, password string, page provi
 		if p.Local {
 			location = "Local"
 		}
-		page.Providers = append(page.Providers, providerView{Name: n, Type: p.Type, BaseURL: p.BaseURL, Model: p.Model, APIKeyEnv: p.APIKeyEnv, Location: location, ResponsesBackend: p.ResponsesBackend, CredentialConfigured: p.APIKeyEnv != ""})
+		page.Providers = append(page.Providers, providerView{Name: n, Type: p.Type, BaseURL: p.BaseURL, Model: p.Model, APIKeyEnv: p.APIKeyEnv, Location: location, ResponsesBackend: p.ResponsesBackend, Preset: presetForProvider(p), CredentialConfigured: store.HasCredential(p.APIKeyEnv), NoKeyRequired: p.Local && p.APIKeyEnv == ""})
 	}
 	if len(page.Providers) == 0 {
 		page.Onboarding = true
@@ -166,35 +207,56 @@ func parseProviders(form url.Values, existing map[string]config.ProviderConfig) 
 	}
 	for i, raw := range names {
 		name := strings.TrimSpace(raw)
+		if value("provider_remove", i) == "true" {
+			continue
+		}
 		if name == "" {
 			continue
 		}
 		if !providerName.MatchString(name) {
 			return nil, fmt.Errorf("invalid provider name")
 		}
+		if _, exists := out[name]; exists {
+			return nil, fmt.Errorf("provider name is already in use")
+		}
 		env := value("provider_api_key_env", i)
 		if env != "" && !settingName.MatchString(env) {
 			return nil, fmt.Errorf("credential must be an environment variable name, not a secret value")
 		}
 		typ := value("provider_type", i)
+		base := value("provider_base_url", i)
+		local := value("provider_local", i) == "true"
+		responsesBackend := value("provider_responses_backend", i)
+		presetName := value("provider_preset", i)
+		if presetName != "" && presetName != "custom" {
+			preset, found := providerPresets[presetName]
+			if !found {
+				return nil, fmt.Errorf("unsupported provider service")
+			}
+			typ, base, local, responsesBackend = preset.Type, preset.BaseURL, preset.Local, preset.ResponsesBackend
+		}
 		switch typ {
 		case "openai-compatible", "openai", "kimi", "anthropic", "ollama":
 		default:
 			return nil, fmt.Errorf("unsupported provider type")
 		}
-		base := value("provider_base_url", i)
 		u, err := url.Parse(base)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
 			return nil, fmt.Errorf("invalid provider base URL")
 		}
 		model := value("provider_model", i)
 		if model == "" {
+			model = providerPresets[presetName].Model
+		}
+		if model == "" {
 			return nil, fmt.Errorf("provider model is required")
 		}
-		local := value("provider_local", i) == "true"
 		provider := existing[name]
+		if env == "" && i < len(form["provider_api_key"]) && form["provider_api_key"][i] != "" {
+			env = credentialEnvName(name)
+		}
 		provider.Type, provider.BaseURL, provider.Model, provider.APIKeyEnv, provider.APIKey, provider.Local = typ, base, model, env, "", local
-		provider.ResponsesBackend = value("provider_responses_backend", i)
+		provider.ResponsesBackend = responsesBackend
 		out[name] = provider
 	}
 	if err := providers.ValidateConfig(config.Config{Providers: out}); err != nil {

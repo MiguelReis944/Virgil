@@ -2,8 +2,8 @@
 
 NVIDIA's hosted `integrate.api.nvidia.com` endpoint supports Chat Completions for the configured Muse Glimmer model. Codex sends Responses requests. Virgil's **Translate Chat** option converts the supported text and function tool subset between those formats, while keeping policy checks and usage accounting in Virgil.
 
-1. Put `NVIDIA_API_KEY` in Virgil's ignored `.env` file. Keep the value out of the panel and project repositories.
-2. In **Providers**, set type `openai-compatible`, base URL `https://integrate.api.nvidia.com/v1`, model `meta/muse-glimmer-30b`, credential environment name `NVIDIA_API_KEY`, and **Responses → Translate Chat**. Save and restart Virgil.
+1. Open **Providers** in the local panel, choose **NVIDIA**, name the connection, and paste the NVIDIA API key into the password field. The key is stored in Virgil's ignored local `.env`; the panel never displays it again.
+2. Use the suggested model `meta/muse-glimmer-30b`, save, and restart Virgil. The NVIDIA preset selects the hosted endpoint and **Translate Chat** automatically.
 3. From your project directory, follow the [Codex CLI setup](codex.md) using `meta/muse-glimmer-30b` as the model. Keep `-c 'web_search="disabled"'` in the command. Codex's native web search cannot be served by this Chat endpoint.
 4. Send a short prompt and check **Executions** and **Usage** in the panel. If the provider returns a transient error, inspect the run's provider status and retry once.
 

@@ -49,7 +49,7 @@ func RunCore(ctx context.Context, options CoreOptions) error {
 			return fmt.Errorf("load config %q: %w", configPath, err)
 		}
 		slog.Warn("config missing; starting setup server", "reason", err, "url", "http://127.0.0.1:8787/setup")
-		return runSetupServer(ctx, configPath, options.OpenPanel)
+		return runSetupServer(ctx, configPath, envPath, options.OpenPanel)
 	}
 	credential, err := controlauth.LoadOrCreate(filepath.Join(filepath.Dir(cfg.Storage.Path), "control.token"))
 	if err != nil {
@@ -76,7 +76,7 @@ func RunCore(ctx context.Context, options CoreOptions) error {
 		return err
 	}
 	defer readDB.Close()
-	handler, journal, engine, err := buildHandlerWithControlVersion(cfg, configPath, db, readDB, &credential, options.Version, startedAt)
+	handler, journal, engine, err := buildHandlerWithControlVersion(cfg, configPath, db, readDB, &credential, options.Version, envPath, startedAt)
 	if err != nil {
 		return err
 	}
@@ -116,7 +116,7 @@ func RunCore(ctx context.Context, options CoreOptions) error {
 	return servePanel(ctx, listener, handler, panelURL, open)
 }
 
-func runSetupServer(ctx context.Context, configPath string, openPanel bool) error {
+func runSetupServer(ctx context.Context, configPath, envPath string, openPanel bool) error {
 	if _, err := os.Stat(configPath); errors.Is(err, os.ErrNotExist) {
 		if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil && filepath.Dir(configPath) != "." {
 			return fmt.Errorf("create config directory: %w", err)
@@ -130,7 +130,7 @@ func runSetupServer(ctx context.Context, configPath string, openPanel bool) erro
 	setupH := gateway.NewSetupHandler(configPath)
 	mux.HandleFunc("GET /setup", setupH)
 	mux.HandleFunc("POST /setup", setupH)
-	settingsStore := settings.New(configPath)
+	settingsStore := settings.NewWithEnv(configPath, envPath)
 	providersHandler := dashboard.ProvidersHandler(settingsStore, "")
 	protectionsHandler := dashboard.ProtectionsHandler(settingsStore, "")
 	mux.Handle("GET /dashboard/providers", providersHandler)
@@ -257,10 +257,10 @@ func BuildHandlerWithEngine(cfg config.Config, configPath string, db, readDB *sq
 }
 
 func buildHandlerWithControl(cfg config.Config, configPath string, db, readDB *sql.DB, credential *controlauth.Credential, startedAt ...time.Time) (http.Handler, *storage.Journal, *policies.Engine, error) {
-	return buildHandlerWithControlVersion(cfg, configPath, db, readDB, credential, "", startedAt...)
+	return buildHandlerWithControlVersion(cfg, configPath, db, readDB, credential, "", "", startedAt...)
 }
 
-func buildHandlerWithControlVersion(cfg config.Config, configPath string, db, readDB *sql.DB, credential *controlauth.Credential, version string, startedAt ...time.Time) (http.Handler, *storage.Journal, *policies.Engine, error) {
+func buildHandlerWithControlVersion(cfg config.Config, configPath string, db, readDB *sql.DB, credential *controlauth.Credential, version, envPath string, startedAt ...time.Time) (http.Handler, *storage.Journal, *policies.Engine, error) {
 	journal, err := storage.NewJournalWithReadPool(db, readDB)
 	if err != nil {
 		return nil, nil, nil, err
@@ -299,7 +299,7 @@ func buildHandlerWithControlVersion(cfg config.Config, configPath string, db, re
 	appliedHash, hashErr := settings.HashFile(configPath)
 	var settingsStore *settings.Store
 	if hashErr == nil {
-		settingsStore = settings.New(configPath)
+		settingsStore = settings.NewWithEnv(configPath, envPath)
 	}
 	handler, err := gateway.NewServer(cfg, gateway.Dependencies{
 		DB: db, Getenv: os.Getenv,
